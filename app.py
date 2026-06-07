@@ -731,7 +731,7 @@ def render_file_manager(selected_site: str, step: dict):
                 if st.button("열기", key=f"view_{file_key}", help="새창에서 문서 보기", use_container_width=True):
                     show_file_dialog(file_path_value, file_name)
             with btn_col2:
-                if ext in SUPPORTED_AI_EXTS and st.button("요약", key=f"ai_{file_key}", help="새창에서 공문서 양식으로 요약", use_container_width=True):
+                if ext in SUPPORTED_AI_EXTS and st.button("요약", key=f"ai_{file_key}", help="AI로 문서 요약", use_container_width=True):
                     show_summary_dialog(file_path_value, file_name)
         else:
             with btn_col1:
