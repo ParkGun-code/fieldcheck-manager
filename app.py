@@ -118,12 +118,27 @@ def resolve_path(path_value: str) -> Path:
 
 
 def unique_attachment_path(site_name: str, original_filename: str) -> Path:
+    """수동 저장용 예비 함수. 업로드 파일은 아래 deterministic_attachment_path를 우선 사용."""
     original = Path(original_filename)
     stem = safe_slug(original.stem, 70)
     ext = original.suffix.lower()
     site = safe_slug(site_name, 50)
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     return ATTACH_DIR / f"{site}_{stamp}_{uuid4().hex[:8]}_{stem}{ext}"
+
+
+def deterministic_attachment_path(site_name: str, step_id: str, original_filename: str, file_digest: str) -> Path:
+    """
+    같은 파일이 Streamlit 재실행 때 반복 저장되지 않도록,
+    현장명 + 일정ID + 파일내용 해시 + 원본 파일명으로 항상 같은 저장 경로를 생성함.
+    """
+    original = Path(original_filename)
+    stem = safe_slug(original.stem, 70)
+    ext = original.suffix.lower()
+    site = safe_slug(site_name, 50)
+    step = safe_slug(step_id, 20)
+    digest = safe_slug(file_digest[:12], 12)
+    return ATTACH_DIR / f"{site}_{step}_{digest}_{stem}{ext}"
 
 
 def read_text_file(file_path: Path) -> str:
@@ -643,24 +658,41 @@ def handle_file_uploads(selected_site: str, step: dict):
         return False
 
     has_new = False
+    step.setdefault("files", [])
+
     for uf in uploaded_files:
         if uf.size > MAX_UPLOAD_MB * 1024 * 1024:
             st.error(f"{uf.name}: 파일 용량이 {MAX_UPLOAD_MB}MB를 초과하여 업로드하지 않았습니다.")
             continue
 
-        save_path = unique_attachment_path(selected_site, uf.name)
-        with save_path.open("wb") as f:
-            f.write(uf.getbuffer())
-
+        # 핵심 수정: Streamlit은 파일 업로드 후 앱을 다시 실행함.
+        # 기존 코드는 재실행될 때마다 uuid가 붙은 새 파일명을 만들었기 때문에
+        # 같은 파일을 계속 새 파일로 판단하여 무한 새로고침처럼 보였음.
+        # 파일 내용 해시 기반의 고정 경로를 사용하면 같은 파일은 한 번만 저장됨.
+        file_bytes = uf.getvalue()
+        file_digest = hashlib.sha256(file_bytes).hexdigest()
+        save_path = deterministic_attachment_path(selected_site, step_id, uf.name, file_digest)
         storage_path = to_storage_path(save_path)
-        step.setdefault("files", []).append(storage_path)
+
+        if storage_path in step["files"] and save_path.exists():
+            continue
+
+        if not save_path.exists():
+            save_path.parent.mkdir(parents=True, exist_ok=True)
+            save_path.write_bytes(file_bytes)
+
+        if storage_path not in step["files"]:
+            step["files"].append(storage_path)
         has_new = True
 
         if save_path.suffix.lower() in {".hwp", ".hwpx"}:
             with st.spinner("한글(HWP/HWPX) 문서를 PDF로 자동 변환 중입니다..."):
                 pdf_path = hwp_to_pdf(save_path)
                 if pdf_path != save_path and pdf_path.exists():
-                    step["files"].append(to_storage_path(pdf_path))
+                    pdf_storage_path = to_storage_path(pdf_path)
+                    if pdf_storage_path not in step["files"]:
+                        step["files"].append(pdf_storage_path)
+                        has_new = True
 
     return has_new
 
