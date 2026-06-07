@@ -728,10 +728,10 @@ def render_file_manager(selected_site: str, step: dict):
 
         if ext in SUPPORTED_PREVIEW_EXTS:
             with btn_col1:
-                if st.button("👁️ 열기", key=f"view_{file_key}", help="새창에서 문서 보기", use_container_width=True):
+                if st.button("열기", key=f"view_{file_key}", help="새창에서 문서 보기", use_container_width=True):
                     show_file_dialog(file_path_value, file_name)
             with btn_col2:
-                if ext in SUPPORTED_AI_EXTS and st.button("✨ 요약", key=f"ai_{file_key}", help="새창에서 공문서 양식으로 요약", use_container_width=True):
+                if ext in SUPPORTED_AI_EXTS and st.button("요약", key=f"ai_{file_key}", help="새창에서 공문서 양식으로 요약", use_container_width=True):
                     show_summary_dialog(file_path_value, file_name)
         else:
             with btn_col1:
@@ -740,7 +740,7 @@ def render_file_manager(selected_site: str, step: dict):
                 st.write("")
 
         with btn_col3:
-            if st.button("🗑️ 삭제", key=f"delf_{file_key}", use_container_width=True):
+            if st.button("삭제", key=f"delf_{file_key}", use_container_width=True):
                 if file_path_value in step.get("files", []):
                     step["files"].remove(file_path_value)
                 try:
