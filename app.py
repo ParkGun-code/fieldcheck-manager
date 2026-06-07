@@ -56,7 +56,6 @@ def get_config(name: str, default: str = "") -> str:
         pass
     return default
 
-
 APP_USER_ID = get_config("APP_USER_ID")
 APP_PASSWORD = get_config("APP_PASSWORD")
 APP_PASSWORD_HASH = get_config("APP_PASSWORD_HASH")  # sha256 해시 권장
@@ -299,17 +298,70 @@ def show_file_dialog(file_path_value: str, file_name: str):
     if ext in {".png", ".jpg", ".jpeg"}:
         st.image(str(file_path), use_container_width=True)
     elif ext == ".pdf":
-        with file_path.open("rb") as f:
-            base64_pdf = base64.b64encode(f.read()).decode("utf-8")
-        pdf_display = (
-            f'<iframe src="data:application/pdf;base64,{base64_pdf}" '
-            'width="100%" height="700" type="application/pdf"></iframe>'
-        )
-        st.markdown(pdf_display, unsafe_allow_html=True)
+        st.info("PDF는 파일 목록의 '열기' 버튼을 누르면 웹브라우저 새 탭에서 바로 열립니다.")
     elif ext == ".txt":
         st.text_area("문서 내용", read_text_file(file_path), height=500)
     else:
         st.warning("웹 미리보기를 지원하지 않는 형식입니다. 체크박스를 선택해 ZIP으로 다운로드해 주세요.")
+
+
+def render_pdf_browser_open_button(file_path: Path, file_key: str):
+    """PDF 파일을 Streamlit 다이얼로그가 아닌 웹브라우저 새 탭에서 바로 열기 위한 버튼 렌더링."""
+    try:
+        with file_path.open("rb") as f:
+            base64_pdf = base64.b64encode(f.read()).decode("utf-8")
+    except Exception as e:
+        st.error(f"PDF 파일을 읽을 수 없습니다: {e}")
+        return
+
+    # data URL을 그대로 a 태그 href에 넣으면 일부 브라우저/보안정책에서 막힐 수 있어,
+    # 클릭 시 Blob URL을 만든 뒤 새 탭으로 여는 방식으로 처리함.
+    button_id = f"open_pdf_{safe_slug(file_key, 80)}"
+    js = f"""
+    <button id="{button_id}" style="
+        width:100%;
+        min-height:38px;
+        border:1px solid rgba(49, 51, 63, 0.2);
+        border-radius:0.5rem;
+        background:#ffffff;
+        cursor:pointer;
+        font-size:14px;
+    ">열기</button>
+    <script>
+    (function() {{
+        const button = document.getElementById("{button_id}");
+        const base64Data = "{base64_pdf}";
+        let objectUrl = null;
+
+        function base64ToBlob(base64, mimeType) {{
+            const byteCharacters = atob(base64);
+            const byteArrays = [];
+            const sliceSize = 1024;
+            for (let offset = 0; offset < byteCharacters.length; offset += sliceSize) {{
+                const slice = byteCharacters.slice(offset, offset + sliceSize);
+                const byteNumbers = new Array(slice.length);
+                for (let i = 0; i < slice.length; i++) {{
+                    byteNumbers[i] = slice.charCodeAt(i);
+                }}
+                byteArrays.push(new Uint8Array(byteNumbers));
+            }}
+            return new Blob(byteArrays, {{ type: mimeType }});
+        }}
+
+        button.addEventListener("click", function() {{
+            if (!objectUrl) {{
+                const blob = base64ToBlob(base64Data, "application/pdf");
+                objectUrl = URL.createObjectURL(blob);
+            }}
+            const newWindow = window.open(objectUrl, "_blank", "noopener,noreferrer");
+            if (!newWindow) {{
+                alert("팝업이 차단되었습니다. 브라우저에서 이 사이트의 팝업을 허용해 주세요.");
+            }}
+        }});
+    }})();
+    </script>
+    """
+    components.html(js, height=42)
 
 
 # ==========================================
@@ -728,7 +780,9 @@ def render_file_manager(selected_site: str, step: dict):
 
         if ext in SUPPORTED_PREVIEW_EXTS:
             with btn_col1:
-                if st.button("열기", key=f"view_{file_key}", help="새창에서 문서 보기", use_container_width=True):
+                if ext == ".pdf":
+                    render_pdf_browser_open_button(file_path, file_key)
+                elif st.button("열기", key=f"view_{file_key}", help="새창에서 문서 보기", use_container_width=True):
                     show_file_dialog(file_path_value, file_name)
             with btn_col2:
                 if ext in SUPPORTED_AI_EXTS and st.button("요약", key=f"ai_{file_key}", help="AI로 문서 요약", use_container_width=True):
