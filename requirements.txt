@@ -3,3 +3,8 @@ google-genai>=1.0.0
 pywin32; platform_system == "Windows"
 pandas
 openpyxl
+pymupdf
+pytesseract
+google-generativeai
+pandas
+openpyxl
