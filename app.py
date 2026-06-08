@@ -18,6 +18,10 @@ import zipfile
 import io
 import pandas as pd
 
+import json
+import html as html_lib
+from textwrap import dedent
+
 # ==========================================
 # 🛑 HWP -> PDF 변환용 라이브러리 (윈도우 전용)
 # ==========================================
@@ -177,76 +181,254 @@ def show_file_dialog(file_path, file_name):
 # ==========================================
 def render_html_calendar(site_data, year, month, selected_site=None):
     cal = calendar.monthcalendar(year, month)
-    html = "<style>"
-    html += ".cal-cell-scroll::-webkit-scrollbar { width: 6px; }"
-    html += ".cal-cell-scroll::-webkit-scrollbar-thumb { background: #c1c1c1; border-radius: 3px; }"
-    html += ".cal-cell-scroll::-webkit-scrollbar-track { background: #f1f1f1; }"
-    html += "</style>"
-    html += """
-    <div id="customModal" style="display:none; position:fixed; z-index:9999; left:50%; top:50%; transform:translate(-50%, -50%); background:#ffffff; padding:20px; border:1px solid #ccc; border-radius:12px; box-shadow:0 8px 16px rgba(0,0,0,0.3); width:450px;">
-        <h3 id="modalSiteName" style="margin-top:0; color:#1f2937; border-bottom:2px solid #e5e7eb; padding-bottom:10px;">현장명</h3>
-        <p id="modalDesc" style="font-weight:bold; color:#2563eb; margin-bottom:5px;"></p>
-        <pre id="modalMemo" style="white-space:pre-wrap; font-family:'Malgun Gothic', sans-serif; font-size:14px; color:#4b5563; background:#f3f4f6; padding:15px; border-radius:8px; line-height:1.5;"></pre>
-        <button onclick="document.getElementById('customModal').style.display='none'" style="float:right; padding:8px 16px; cursor:pointer; background:#3b82f6; color:white; border:none; border-radius:6px; font-weight:bold;">닫기</button>
+
+    html_parts = []
+
+    html_parts.append(dedent("""
+    <style>
+        body {
+            font-family: 'Malgun Gothic', sans-serif;
+            margin: 0;
+            padding: 0;
+        }
+
+        .cal-cell-scroll::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        .cal-cell-scroll::-webkit-scrollbar-thumb {
+            background: #c1c1c1;
+            border-radius: 3px;
+        }
+
+        .cal-cell-scroll::-webkit-scrollbar-track {
+            background: #f1f1f1;
+        }
+
+        .calendar-table {
+            width: 100%;
+            table-layout: fixed;
+            border-collapse: collapse;
+            text-align: left;
+            background-color: #ffffff;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }
+
+        .calendar-table th {
+            border: 1px solid #ddd;
+            padding: 10px;
+            text-align: center;
+            background-color: #f0f2f6;
+            font-size: 16px;
+        }
+
+        .calendar-table td {
+            border: 1px solid #ddd;
+            padding: 0;
+            vertical-align: top;
+        }
+
+        .calendar-cell {
+            display: flex;
+            flex-direction: column;
+            height: 130px;
+            padding: 6px;
+        }
+
+        .calendar-day {
+            font-size: 16px;
+            margin-bottom: 2px;
+            flex-shrink: 0;
+        }
+
+        .calendar-event {
+            cursor: pointer;
+            font-size: 12px;
+            margin-top: 4px;
+            padding: 4px;
+            border-left: 3px solid;
+            border-radius: 3px;
+            transition: 0.2s;
+            word-break: keep-all;
+        }
+
+        .calendar-event:hover {
+            filter: brightness(0.95);
+        }
+
+        #customModal {
+            display: none;
+            position: fixed;
+            z-index: 9999;
+            left: 50%;
+            top: 50%;
+            transform: translate(-50%, -50%);
+            background: #ffffff;
+            padding: 20px;
+            border: 1px solid #ccc;
+            border-radius: 12px;
+            box-shadow: 0 8px 16px rgba(0,0,0,0.3);
+            width: 450px;
+            max-width: 90%;
+        }
+
+        #modalSiteName {
+            margin-top: 0;
+            color: #1f2937;
+            border-bottom: 2px solid #e5e7eb;
+            padding-bottom: 10px;
+        }
+
+        #modalDesc {
+            font-weight: bold;
+            color: #2563eb;
+            margin-bottom: 5px;
+        }
+
+        #modalMemo {
+            white-space: pre-wrap;
+            font-family: 'Malgun Gothic', sans-serif;
+            font-size: 14px;
+            color: #4b5563;
+            background: #f3f4f6;
+            padding: 15px;
+            border-radius: 8px;
+            line-height: 1.5;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .modal-close-btn {
+            float: right;
+            padding: 8px 16px;
+            cursor: pointer;
+            background: #3b82f6;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-weight: bold;
+        }
+    </style>
+
+    <div id="customModal">
+        <h3 id="modalSiteName">현장명</h3>
+        <p id="modalDesc"></p>
+        <pre id="modalMemo"></pre>
+        <button class="modal-close-btn" onclick="closeSiteInfo()">닫기</button>
+        <div style="clear: both;"></div>
     </div>
+
     <script>
-    function openSiteInfo(site, desc, memo) {
-        document.getElementById('modalSiteName').innerText = site;
-        document.getElementById('modalDesc').innerText = desc;
-        document.getElementById('modalMemo').innerText = memo;
-        document.getElementById('customModal').style.display = 'block';
-    }
+        function openSiteInfo(site, desc, memo) {
+            document.getElementById('modalSiteName').innerText = site || '';
+            document.getElementById('modalDesc').innerText = desc || '';
+            document.getElementById('modalMemo').innerText = memo || '';
+            document.getElementById('customModal').style.display = 'block';
+        }
+
+        function closeSiteInfo() {
+            document.getElementById('customModal').style.display = 'none';
+        }
     </script>
-    """
-    html += "<table style='width:100%; table-layout:fixed; border-collapse: collapse; text-align:left; background-color:#ffffff; box-shadow: 0 4px 8px rgba(0,0,0,0.1);'>"
-    html += "<tr>"
+    """))
+
+    html_parts.append("<table class='calendar-table'>")
+    html_parts.append("<tr>")
+
     for d in ['월', '화', '수', '목', '금', '토', '일']:
-        html += f"<th style='border:1px solid #ddd; padding:10px; text-align:center; background-color:#f0f2f6; font-size:16px;'>{d}</th>"
-    html += "</tr>"
+        html_parts.append(f"<th>{d}</th>")
+
+    html_parts.append("</tr>")
+
     for week in cal:
-        html += "<tr>"
+        html_parts.append("<tr>")
+
         for day in week:
             if day == 0:
-                html += "<td style='border:1px solid #ddd; background-color:#fafafa;'></td>"
-            else:
-                current_date = date(year, month, day)
-                bg_color = "#e6f2ff" if current_date == date.today() else "#ffffff"
-                day_events = []
-                for site, steps in site_data.items():
-                    if selected_site and selected_site != "전체 현장" and site != selected_site: 
+                html_parts.append("<td style='background-color:#fafafa;'></td>")
+                continue
+
+            current_date = date(year, month, day)
+            bg_color = "#e6f2ff" if current_date == date.today() else "#ffffff"
+
+            day_events = []
+
+            for site, steps in site_data.items():
+                if selected_site and selected_site != "전체 현장" and site != selected_site:
+                    continue
+
+                for step in steps:
+                    if step.get('date') != current_date:
                         continue
-                    for step in steps:
-                        if step['date'] == current_date:
-                            if "우기" in step['desc']:
-                                event_bg, event_border = "#dbeafe", "#1d4ed8"  
-                            elif "상시" in step['desc'] or "월점검" in step['desc']:
-                                event_bg, event_border = "#d1fae5", "#047857"  
-                            elif "현장점검" in step['desc']:
-                                event_bg, event_border = "#f3f4f6", "#374151"  
-                            else:
-                                event_bg, event_border = "#fef3c7", "#b45309"  
-                            safe_site = site.replace("'", "\\'").replace('"', '&quot;')
-                            safe_desc = step['desc'].replace("'", "\\'").replace('"', '&quot;')
-                            safe_memo = step.get('memo', '').replace('\n', '\\n').replace("'", "\\'").replace('"', '&quot;')
-                            div_html = f"<div onclick=\"openSiteInfo('{safe_site}', '{safe_desc}', '{safe_memo}')\" style='cursor:pointer; font-size:12px; margin-top:4px; padding:4px; background-color:{event_bg}; border-left:3px solid {event_border}; border-radius:3px; transition: 0.2s;'><b>[{site}]</b> {step['desc']}</div>"
-                            day_events.append(div_html)
-                MAX_DISPLAY = 20
-                events_html = ""
-                for i, e in enumerate(day_events):
-                    if i < MAX_DISPLAY:
-                        events_html += e
-                    elif i == MAX_DISPLAY:
-                        events_html += f"<div style='font-size:12px; margin-top:4px; padding:4px; text-align:center; background-color:#e0e0e0; color:#555; border-radius:3px;'>...외 {len(day_events) - MAX_DISPLAY}건 더 있음</div>"
-                        break
-                html += f"<td style='border:1px solid #ddd; padding:0; vertical-align:top; background-color:{bg_color};'>"
-                html += "<div style='display:flex; flex-direction:column; height:130px; padding:6px;'>"
-                html += f"<strong style='font-size:16px; margin-bottom:2px; flex-shrink:0;'>{day}</strong>"
-                html += "<div class='cal-cell-scroll' style='flex-grow:1; overflow-y:auto; padding-right:4px;'>"
-                html += events_html
-                html += "</div></div></td>"
-        html += "</tr>"
-    html += "</table><br>"
-    return html
+
+                    desc = str(step.get('desc', ''))
+                    memo = str(step.get('memo', ''))
+
+                    if "우기" in desc:
+                        event_bg, event_border = "#dbeafe", "#1d4ed8"
+                    elif "상시" in desc or "월점검" in desc:
+                        event_bg, event_border = "#d1fae5", "#047857"
+                    elif "현장점검" in desc:
+                        event_bg, event_border = "#f3f4f6", "#374151"
+                    else:
+                        event_bg, event_border = "#fef3c7", "#b45309"
+
+                    site_label = html_lib.escape(site)
+                    desc_label = html_lib.escape(desc)
+
+                    site_arg = html_lib.escape(json.dumps(site, ensure_ascii=False), quote=True)
+                    desc_arg = html_lib.escape(json.dumps(desc, ensure_ascii=False), quote=True)
+                    memo_arg = html_lib.escape(json.dumps(memo, ensure_ascii=False), quote=True)
+
+                    event_html = f"""
+                    <div
+                        class="calendar-event"
+                        onclick="openSiteInfo({site_arg}, {desc_arg}, {memo_arg})"
+                        style="background-color:{event_bg}; border-left-color:{event_border};"
+                    >
+                        <b>[{site_label}]</b> {desc_label}
+                    </div>
+                    """
+
+                    day_events.append(dedent(event_html))
+
+            max_display = 20
+            events_html = ""
+
+            for i, event in enumerate(day_events):
+                if i < max_display:
+                    events_html += event
+                elif i == max_display:
+                    remaining = len(day_events) - max_display
+                    events_html += f"""
+                    <div style="
+                        font-size:12px;
+                        margin-top:4px;
+                        padding:4px;
+                        text-align:center;
+                        background-color:#e0e0e0;
+                        color:#555;
+                        border-radius:3px;
+                    ">
+                        ...외 {remaining}건 더 있음
+                    </div>
+                    """
+                    break
+
+            html_parts.append(f"<td style='background-color:{bg_color};'>")
+            html_parts.append("<div class='calendar-cell'>")
+            html_parts.append(f"<strong class='calendar-day'>{day}</strong>")
+            html_parts.append("<div class='cal-cell-scroll' style='flex-grow:1; overflow-y:auto; padding-right:4px;'>")
+            html_parts.append(events_html)
+            html_parts.append("</div>")
+            html_parts.append("</div>")
+            html_parts.append("</td>")
+
+        html_parts.append("</tr>")
+
+    html_parts.append("</table>")
+
+    return "".join(html_parts)
 
 # ==========================================
 # 🤖 5. 공무원 양식 AI 요약 프롬프트 적용
@@ -557,8 +739,17 @@ def main():
             else: st.session_state.cal_month += 1
             st.rerun()
 
-    st.markdown(render_html_calendar(st.session_state.site_data, st.session_state.cal_year, st.session_state.cal_month, selected_site), unsafe_allow_html=True)
-    st.divider()
+	calendar_html = render_html_calendar(
+		st.session_state.site_data,
+		st.session_state.cal_year,
+		st.session_state.cal_month,
+		selected_site
+	)
+
+	components.html(calendar_html, height=900, scrolling=True)
+	
+	
+	st.divider()
 
     if selected_site != "전체 현장":
         st.subheader(f"📂 [{selected_site}] 세부 일정 및 파일 관리")
