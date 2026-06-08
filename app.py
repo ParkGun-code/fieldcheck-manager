@@ -321,26 +321,84 @@ def extract_team_from_desc(desc):
     return match.group(1).strip() if match else ""
 
 
+def strip_wrapping_brackets(value):
+    """사용자가 [1조]처럼 입력해도 화면에는 [[1조]]로 중복 표시되지 않게 정리합니다."""
+    value = clean_cell(value)
+    if value.startswith("[") and value.endswith("]"):
+        return value[1:-1].strip()
+    return value
+
+
+def normalize_inspection_period_label(period):
+    """점검시기를 달력 표시용 짧은 명칭으로 변환합니다. 예: 우기대비 점검 -> 우기"""
+    period = strip_wrapping_brackets(period)
+    if not period or period == "기타":
+        return ""
+
+    if "우기" in period:
+        return "우기"
+    if "해빙" in period:
+        return "해빙기"
+    if "동절" in period or "겨울" in period:
+        return "동절기"
+
+    month_match = re.search(r"(1[0-2]|[1-9])\s*월", period)
+    if month_match and "상시" in period:
+        return f"{int(month_match.group(1))}월 상시"
+    if "상시" in period:
+        return "상시"
+
+    return period.replace(" 점검", "").replace("점검", "").strip()
+
+
+def truncate_label(label, max_chars=34):
+    """긴 표시문구는 지정 길이 이후 ...으로 줄입니다."""
+    label = clean_cell(label)
+    if max_chars and len(label) > max_chars:
+        return label[:max_chars - 3].rstrip() + "..."
+    return label
+
+
 def make_calendar_event_label(site, step):
-    """달력에 표시할 문구를 아이콘 없이 좌측 정렬용 텍스트로 만듭니다."""
+    """달력/현장리스트 공통 표시문구를 [점검시기][담당조]현장명 형식으로 만듭니다."""
     desc = clean_cell(step.get("desc", ""))
     period = clean_cell(step.get("inspection_period", "")) or infer_inspection_period(plan_date=step.get("date"), desc=desc)
     team = clean_cell(step.get("team", "")) or extract_team_from_desc(desc)
 
-    pieces = []
-    if team:
-        pieces.append(f"[{team}]")
-    if period and period != "기타":
-        pieces.append(period)
+    period_label = normalize_inspection_period_label(period)
+    team_label = strip_wrapping_brackets(team)
 
-    # 기존 업무명에 점검시기와 조 정보가 이미 들어있으면 중복 표시하지 않습니다.
-    desc_without_team = re.sub(r"^\s*\[[^\]]*조\]\s*", "", desc).strip()
-    if desc_without_team and desc_without_team not in pieces and not any(desc_without_team == p for p in pieces):
-        if not period or period == "기타" or period not in desc_without_team:
-            pieces.append(desc_without_team)
+    prefix = ""
+    if period_label:
+        prefix += f"[{period_label}]"
+    if team_label:
+        prefix += f"[{team_label}]"
 
-    body = " ".join(pieces).strip() or desc or "현장점검"
-    return f"[{site}] {body}"
+    return f"{prefix}{clean_cell(site)}" if prefix else clean_cell(site)
+
+
+def get_representative_step_for_site(steps):
+    """좌측 현장리스트 표시용으로 오늘 이후 가장 가까운 일정을 우선 사용합니다."""
+    if not steps:
+        return {}
+
+    today = date.today()
+    dated_steps = [step for step in steps if step.get("date")]
+    if not dated_steps:
+        return steps[0]
+
+    upcoming_steps = [step for step in dated_steps if step.get("date") >= today]
+    if upcoming_steps:
+        return min(upcoming_steps, key=lambda step: step.get("date"))
+    return max(dated_steps, key=lambda step: step.get("date"))
+
+
+def make_site_list_label(site, site_data, max_chars=34):
+    """좌측 현장리스트도 달력과 동일한 형식으로 표시합니다."""
+    if site == "전체 현장":
+        return site
+    step = get_representative_step_for_site(site_data.get(site, []))
+    return truncate_label(make_calendar_event_label(site, step), max_chars=max_chars)
 
 def get_site_detail_defaults(steps):
     """같은 현장의 여러 일정 중 먼저 입력된 상세정보를 기본값으로 사용합니다."""
@@ -511,26 +569,32 @@ def render_streamlit_calendar(site_data, year, month, selected_site=None):
     st.markdown("""
     <style>
     div[data-testid="stVerticalBlockBorderWrapper"] button[kind="secondary"] {
-        min-height: 38px;
-        white-space: normal;
+        min-height: 34px;
+        white-space: nowrap !important;
         word-break: keep-all;
         line-height: 1.25;
         font-size: 0.82rem;
         padding: 0.35rem 0.45rem;
         text-align: left !important;
         justify-content: flex-start !important;
-        align-items: flex-start !important;
+        align-items: center !important;
+        overflow: hidden !important;
     }
     div[data-testid="stVerticalBlockBorderWrapper"] button[kind="secondary"] p,
     div[data-testid="stVerticalBlockBorderWrapper"] button[data-testid="stBaseButton-secondary"] p {
         text-align: left !important;
         width: 100%;
         margin: 0;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+        white-space: nowrap !important;
+        display: block !important;
     }
     div[data-testid="stVerticalBlockBorderWrapper"] button[data-testid="stBaseButton-secondary"] {
         text-align: left !important;
         justify-content: flex-start !important;
-        align-items: flex-start !important;
+        align-items: center !important;
+        overflow: hidden !important;
     }
     .calendar-today-badge {
         display: inline-block;
@@ -573,9 +637,7 @@ def render_streamlit_calendar(site_data, year, month, selected_site=None):
                         continue
 
                     for event_no, (site, step_idx, step) in enumerate(day_events):
-                        label = make_calendar_event_label(site, step)
-                        if len(label) > 75:
-                            label = label[:72] + "..."
+                        label = truncate_label(make_calendar_event_label(site, step), max_chars=34)
 
                         # help 옵션을 넣지 않아 마우스 오버 미리보기가 뜨지 않습니다.
                         btn_key = make_streamlit_key("cal_btn", year, month, week_idx, col_idx, event_no, site, step_idx)
@@ -656,6 +718,9 @@ def render_html_calendar(site_data, year, month, selected_site=None):
             border-radius: 3px;
             transition: 0.2s;
             word-break: keep-all;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
         }
 
         .calendar-event:hover {
@@ -807,21 +872,24 @@ def render_html_calendar(site_data, year, month, selected_site=None):
                     desc = clean_cell(step.get('desc', ''))
                     memo = clean_cell(step.get('memo', ''))
                     detail = format_site_detail_for_popup(step)
+                    period_value = clean_cell(step.get('inspection_period', '')) or infer_inspection_period(plan_date=step.get('date'), desc=desc)
+                    color_source = f"{period_value} {desc}"
 
-                    if "우기" in desc:
+                    if "우기" in color_source:
                         event_bg, event_border = "#dbeafe", "#1d4ed8"
-                    elif "상시" in desc or "월점검" in desc:
+                    elif "상시" in color_source or "월점검" in color_source:
                         event_bg, event_border = "#d1fae5", "#047857"
-                    elif "현장점검" in desc:
+                    elif "현장점검" in color_source:
                         event_bg, event_border = "#f3f4f6", "#374151"
                     else:
                         event_bg, event_border = "#fef3c7", "#b45309"
 
-                    site_label = html_lib.escape(site)
-                    desc_label = html_lib.escape(desc)
+                    event_label = make_calendar_event_label(site, step)
+                    display_label = truncate_label(event_label, max_chars=34)
+                    display_label = html_lib.escape(display_label)
 
                     site_arg = html_lib.escape(json.dumps(site, ensure_ascii=False), quote=True)
-                    desc_arg = html_lib.escape(json.dumps(desc, ensure_ascii=False), quote=True)
+                    desc_arg = html_lib.escape(json.dumps(event_label, ensure_ascii=False), quote=True)
                     memo_arg = html_lib.escape(json.dumps(memo, ensure_ascii=False), quote=True)
                     detail_arg = html_lib.escape(json.dumps(detail, ensure_ascii=False), quote=True)
 
@@ -831,7 +899,7 @@ def render_html_calendar(site_data, year, month, selected_site=None):
                         onclick="openSiteInfo({site_arg}, {desc_arg}, {memo_arg}, {detail_arg}, {step_idx})"
                         style="background-color:{event_bg}; border-left-color:{event_border};"
                     >
-                        <b>[{site_label}]</b> {desc_label}
+                        {display_label}
                     </div>
                     """
 
@@ -1258,7 +1326,12 @@ def main():
             site_options = ["전체 현장"] + all_sites
             
         with st.container(height=300, border=True):
-            selected_site = st.radio("일정을 볼 현장 선택", site_options, label_visibility="collapsed")
+            selected_site = st.radio(
+                "일정을 볼 현장 선택",
+                site_options,
+                label_visibility="collapsed",
+                format_func=lambda site: make_site_list_label(site, st.session_state.site_data, max_chars=34)
+            )
         
         st.markdown("<br>", unsafe_allow_html=True)
         if selected_site != "전체 현장":
