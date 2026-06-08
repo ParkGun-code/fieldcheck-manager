@@ -748,7 +748,7 @@ def main():
 
     components.html(calendar_html, height=900, scrolling=True)
 		
-	st.divider()
+    st.divider()
 
     if selected_site != "전체 현장":
         st.subheader(f"📂 [{selected_site}] 세부 일정 및 파일 관리")
