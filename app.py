@@ -178,14 +178,12 @@ def show_file_dialog(file_path, file_name):
 def render_html_calendar(site_data, year, month, selected_site=None):
     cal = calendar.monthcalendar(year, month)
     
-    # CSS 설정 및 커스텀 모달(팝업) 창 디자인 주입
     html = "<style>"
     html += ".cal-cell-scroll::-webkit-scrollbar { width: 6px; }"
     html += ".cal-cell-scroll::-webkit-scrollbar-thumb { background: #c1c1c1; border-radius: 3px; }"
     html += ".cal-cell-scroll::-webkit-scrollbar-track { background: #f1f1f1; }"
     html += "</style>"
     
-    # HTML 내장 다이얼로그(모달) 템플릿
     html += """
     <div id="customModal" style="display:none; position:fixed; z-index:9999; left:50%; top:50%; transform:translate(-50%, -50%); background:#ffffff; padding:20px; border:1px solid #ccc; border-radius:12px; box-shadow:0 8px 16px rgba(0,0,0,0.3); width:450px;">
         <h3 id="modalSiteName" style="margin-top:0; color:#1f2937; border-bottom:2px solid #e5e7eb; padding-bottom:10px;">현장명</h3>
@@ -225,22 +223,19 @@ def render_html_calendar(site_data, year, month, selected_site=None):
                         continue
                     for step in steps:
                         if step['date'] == current_date:
-                            # 💡 점검 종류 및 내용에 따른 직관적인 달력 색상 분류
                             if "우기" in step['desc']:
-                                event_bg, event_border = "#dbeafe", "#1d4ed8"  # 파란색 계열
+                                event_bg, event_border = "#dbeafe", "#1d4ed8"  
                             elif "상시" in step['desc'] or "월점검" in step['desc']:
-                                event_bg, event_border = "#d1fae5", "#047857"  # 초록색 계열
+                                event_bg, event_border = "#d1fae5", "#047857"  
                             elif "현장점검" in step['desc']:
-                                event_bg, event_border = "#f3f4f6", "#374151"  # 회색 계열
+                                event_bg, event_border = "#f3f4f6", "#374151"  
                             else:
-                                event_bg, event_border = "#fef3c7", "#b45309"  # 행정절차(노란색)
+                                event_bg, event_border = "#fef3c7", "#b45309"  
 
-                            # 자바스크립트 함수로 전달하기 위해 따옴표 및 줄바꿈 문자를 안전하게 치환
                             safe_site = site.replace("'", "\\'").replace('"', '&quot;')
                             safe_desc = step['desc'].replace("'", "\\'").replace('"', '&quot;')
                             safe_memo = step.get('memo', '').replace('\n', '\\n').replace("'", "\\'").replace('"', '&quot;')
                             
-                            # 클릭 시 openSiteInfo 함수 호출
                             div_html = f"<div onclick=\"openSiteInfo('{safe_site}', '{safe_desc}', '{safe_memo}')\" style='cursor:pointer; font-size:12px; margin-top:4px; padding:4px; background-color:{event_bg}; border-left:3px solid {event_border}; border-radius:3px; transition: 0.2s;'><b>[{site}]</b> {step['desc']}</div>"
                             day_events.append(div_html)
 
@@ -413,11 +408,10 @@ def process_excel_schedule(file):
     try:
         if file.name.endswith('.csv'):
             try: df = pd.read_csv(file, encoding='utf-8-sig', header=None)
-            except: df = pd.read_csv(file, encoding='cp949', header=None) # 한글 인코딩 깨짐 방지
+            except: df = pd.read_csv(file, encoding='cp949', header=None)
         else:
             df = pd.read_excel(file, header=None)
         
-        # '공사명'과 '점검예정일'이 있는 행을 찾아 진짜 헤더로 설정
         header_idx = -1
         for i, row in df.iterrows():
             row_str = "".join(str(val) for val in row.values)
@@ -446,22 +440,19 @@ def process_excel_schedule(file):
             manager = str(row.get('성명', '')).strip()
             phone = str(row.get('전화번호', '')).strip()
             
-            # 날짜 파싱 (예: "06.17." -> 2026-06-17)
             try:
                 parts = [p for p in date_raw.split('.') if p.strip().isdigit()]
                 if len(parts) >= 2:
                     plan_date = date(2026, int(parts[0]), int(parts[1]))
                 else:
-                    continue # 날짜 형식이 아니면 스킵
+                    continue 
             except:
                 continue 
             
-            # 파일명을 기반으로 점검 종류 판별
             inspection_type = "상시점검" if "상시" in file.name else "우기대비 점검"
             team_str = f"[{team}]" if team and team != 'nan' else ""
             desc = f"{team_str} {inspection_type}".strip()
             
-            # 팝업에서 보일 상세 내용 조합 (메모 영역에 저장)
             memo_lines = []
             if client and client != 'nan': memo_lines.append(f"🏢 발주처: {client}")
             if builder and builder != 'nan': memo_lines.append(f"👷 시공사: {builder}")
@@ -474,7 +465,6 @@ def process_excel_schedule(file):
             if site_name not in st.session_state.site_data:
                 st.session_state.site_data[site_name] = []
                 
-            # 중복 등록 방지
             existing_descs = [s['desc'] for s in st.session_state.site_data[site_name] if s['date'] == plan_date]
             if desc not in existing_descs:
                 st.session_state.site_data[site_name].append({
@@ -489,7 +479,7 @@ def process_excel_schedule(file):
         if success_count > 0:
             save_data(st.session_state.site_data)
             st.success(f"총 {success_count}건의 점검 일정이 엑셀에서 성공적으로 등록되었습니다!")
-            time.sleep(1) # 메시지를 잠시 보여준 뒤 새로고침
+            time.sleep(1) 
             st.rerun()
         else:
             st.warning("등록할 유효한 일정이 없습니다. (날짜가 '06.17.' 형식인지 확인하세요)")
@@ -520,7 +510,6 @@ def main():
     st.title("🏗️ 건설현장 벌점 및 문서 통합 관리 시스템")
 
     with st.sidebar:
-        # 💡 새로운 엑셀 업로드 UI 영역
         st.header("📁 엑셀 일정 일괄 등록")
         excel_file = st.file_uploader("엑셀/CSV 파일 업로드", type=['csv', 'xlsx', 'xls'])
         if st.button("🚀 일정 자동 등록하기", type="primary", use_container_width=True):
