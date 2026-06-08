@@ -319,7 +319,7 @@ def clear_schedule_edit_query_params():
             del st.query_params[key]
 
 
-@st.dialog("🗓️ 현장점검 일정 변경", width="large")
+@st.dialog("🗓️ 현장정보 확인 및 점검일정 변경", width="large")
 def show_schedule_edit_dialog(site_name, step_idx):
     make_dialog_draggable()
 
@@ -343,7 +343,9 @@ def show_schedule_edit_dialog(site_name, step_idx):
     step = steps[step_idx]
 
     st.markdown(f"### 🏗️ {site_name}")
-    st.caption("달력에서 선택한 일정과 현장 기본정보를 수정합니다. 현장 기본정보는 같은 현장의 모든 일정에 함께 반영됩니다.")
+    st.caption("현재 현장정보를 확인하고, 점검 예정일·업무명·메모·현장 기본정보를 바로 수정할 수 있습니다. 현장 기본정보는 같은 현장의 모든 일정에 함께 반영됩니다.")
+
+    st.info(format_site_detail_for_popup(step))
 
     with st.form(f"calendar_edit_form_{site_name}_{step_idx}"):
         c1, c2 = st.columns([1, 2])
@@ -387,6 +389,105 @@ def show_schedule_edit_dialog(site_name, step_idx):
     if closed:
         clear_schedule_edit_query_params()
         st.rerun()
+
+
+# ==========================================
+# 📅 4-1. Streamlit 네이티브 달력 렌더링 함수
+# ==========================================
+def get_calendar_event_icon(desc):
+    desc = clean_cell(desc)
+    if "우기" in desc:
+        return "🌧️"
+    if "상시" in desc or "월점검" in desc:
+        return "✅"
+    if "현장점검" in desc:
+        return "🏗️"
+    if "벌점" in desc or "이의제기" in desc or "심의" in desc:
+        return "⚠️"
+    return "📌"
+
+
+def make_streamlit_key(*parts):
+    """Streamlit 위젯 key가 중복되지 않도록 안전한 문자열로 변환합니다."""
+    raw = "_".join(clean_cell(part) for part in parts)
+    safe = re.sub(r"[^0-9a-zA-Z가-힣_]+", "_", raw)
+    return safe[:180]
+
+
+def render_streamlit_calendar(site_data, year, month, selected_site=None):
+    """
+    components.html() iframe 방식 대신 Streamlit 네이티브 버튼으로 달력을 렌더링합니다.
+    이렇게 해야 달력 안의 현장명 클릭 이벤트가 Python 쪽으로 확실히 전달되어
+    현장점검 일정 변경 다이얼로그가 정상적으로 열립니다.
+    """
+    cal = calendar.monthcalendar(year, month)
+
+    st.markdown("""
+    <style>
+    div[data-testid="stVerticalBlockBorderWrapper"] button[kind="secondary"] {
+        min-height: 38px;
+        white-space: normal;
+        word-break: keep-all;
+        line-height: 1.25;
+        font-size: 0.82rem;
+        padding: 0.35rem 0.45rem;
+    }
+    .calendar-today-badge {
+        display: inline-block;
+        font-size: 0.72rem;
+        color: #2563eb;
+        font-weight: 700;
+        margin-left: 4px;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+    header_cols = st.columns(7, gap="small")
+    for col, day_name in zip(header_cols, ['월', '화', '수', '목', '금', '토', '일']):
+        with col:
+            st.markdown(f"<div style='text-align:center; font-weight:700; background:#f0f2f6; border:1px solid #ddd; padding:8px; border-radius:6px;'>{day_name}</div>", unsafe_allow_html=True)
+
+    for week_idx, week in enumerate(cal):
+        cols = st.columns(7, gap="small")
+        for col_idx, day in enumerate(week):
+            with cols[col_idx]:
+                with st.container(height=185, border=True):
+                    if day == 0:
+                        st.write("")
+                        continue
+
+                    current_date = date(year, month, day)
+                    today_badge = " <span class='calendar-today-badge'>오늘</span>" if current_date == date.today() else ""
+                    st.markdown(f"<b>{day}</b>{today_badge}", unsafe_allow_html=True)
+
+                    day_events = []
+                    for site, steps in site_data.items():
+                        if selected_site and selected_site != "전체 현장" and site != selected_site:
+                            continue
+                        for step_idx, step in enumerate(steps):
+                            if step.get('date') == current_date:
+                                day_events.append((site, step_idx, step))
+
+                    if not day_events:
+                        st.caption(" ")
+                        continue
+
+                    for event_no, (site, step_idx, step) in enumerate(day_events):
+                        desc = clean_cell(step.get('desc', ''))
+                        icon = get_calendar_event_icon(desc)
+                        label = f"{icon} [{site}] {desc}"
+                        if len(label) > 70:
+                            label = label[:67] + "..."
+
+                        help_text = (
+                            f"현장명: {site}\n"
+                            f"업무명: {desc}\n"
+                            f"{format_site_detail_for_popup(step)}\n"
+                            f"메모: {clean_cell(step.get('memo', '')) or '등록된 메모가 없습니다.'}"
+                        )
+                        btn_key = make_streamlit_key("cal_btn", year, month, week_idx, col_idx, event_no, site, step_idx)
+                        if st.button(label, key=btn_key, use_container_width=True, help=help_text):
+                            show_schedule_edit_dialog(site, step_idx)
 
 # ==========================================
 # 📅 4. 중앙 달력 렌더링 함수
@@ -975,11 +1076,6 @@ def main():
     if "cal_year" not in st.session_state: st.session_state.cal_year = date.today().year
     if "cal_month" not in st.session_state: st.session_state.cal_month = date.today().month
 
-    edit_site = st.query_params.get("edit_site")
-    edit_idx = st.query_params.get("edit_idx")
-    if edit_site is not None and edit_idx is not None:
-        show_schedule_edit_dialog(edit_site, edit_idx)
-
     st.title("🏗️ 건설현장 벌점 및 문서 통합 관리 시스템")
 
     with st.sidebar:
@@ -1065,15 +1161,13 @@ def main():
             else: st.session_state.cal_month += 1
             st.rerun()
 
-    calendar_html = render_html_calendar(
+    render_streamlit_calendar(
         st.session_state.site_data,
         st.session_state.cal_year,
         st.session_state.cal_month,
         selected_site
     )
 
-    components.html(calendar_html, height=900, scrolling=True)
-		
     st.divider()
 
     if selected_site != "전체 현장":
