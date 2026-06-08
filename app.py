@@ -189,7 +189,20 @@ SITE_DETAIL_FIELDS = [
     ("progress_rate", "공정률", ["공정률", "공정율", "진도율", "공사진행률"]),
 ]
 
-DB_COLUMNS = ['No', '현장명', '날짜', '업무명', '메모', '파일경로'] + [label for _, label, _ in SITE_DETAIL_FIELDS]
+STEP_EXTRA_FIELDS = [
+    ("inspection_period", "점검시기", ["점검시기", "점검 시기", "점검구분", "점검 구분", "점검유형", "점검 유형", "점검명"]),
+    ("team", "담당조", ["담당조", "점검조", "조", "반", "담당반"]),
+    ("inspectors", "점검자", ["점검자", "점검자명", "점검자 명", "담당자", "검사자", "참석자"]),
+]
+
+MONTHLY_INSPECTION_OPTIONS = [f"{m}월 상시점검" for m in range(1, 13)]
+INSPECTION_PERIOD_OPTIONS = ["해빙기 점검", "우기대비 점검", "동절기 점검"] + MONTHLY_INSPECTION_OPTIONS + ["기타"]
+
+DB_COLUMNS = (
+    ['No', '현장명', '날짜', '업무명', '메모', '파일경로']
+    + [label for _, label, _ in STEP_EXTRA_FIELDS]
+    + [label for _, label, _ in SITE_DETAIL_FIELDS]
+)
 
 
 def clean_cell(value):
@@ -263,6 +276,72 @@ def parse_date_value(value, default_year=None):
     return None
 
 
+
+def infer_inspection_period(file_name="", row=None, plan_date=None, desc=""):
+    """파일명/엑셀 행/업무명/날짜를 기준으로 점검시기를 자동 분류합니다."""
+    candidates = []
+    if row is not None:
+        try:
+            candidates.append(get_row_value(row, ["점검시기", "점검 시기", "점검구분", "점검 구분", "점검유형", "점검 유형", "점검명"]))
+        except Exception:
+            pass
+    candidates.extend([file_name, desc])
+    source = " ".join(clean_cell(v) for v in candidates if clean_cell(v))
+
+    if "해빙" in source:
+        return "해빙기 점검"
+    if "우기" in source:
+        return "우기대비 점검"
+    if "동절" in source or "겨울" in source:
+        return "동절기 점검"
+    if "상시" in source or "월점검" in source or "월 점검" in source:
+        if plan_date:
+            return f"{plan_date.month}월 상시점검"
+        return "상시점검"
+
+    # 파일명에 1월, 2월처럼 월이 들어가면 월별 상시점검으로 분류합니다.
+    month_match = re.search(r"(1[0-2]|[1-9])\s*월", source)
+    if month_match:
+        return f"{int(month_match.group(1))}월 상시점검"
+
+    return "기타"
+
+
+def selectbox_options_with_current(current_value):
+    current_value = clean_cell(current_value)
+    options = INSPECTION_PERIOD_OPTIONS.copy()
+    if current_value and current_value not in options:
+        options.insert(0, current_value)
+    return options
+
+
+def extract_team_from_desc(desc):
+    desc = clean_cell(desc)
+    match = re.search(r"\[([^\]]*조)\]", desc)
+    return match.group(1).strip() if match else ""
+
+
+def make_calendar_event_label(site, step):
+    """달력에 표시할 문구를 아이콘 없이 좌측 정렬용 텍스트로 만듭니다."""
+    desc = clean_cell(step.get("desc", ""))
+    period = clean_cell(step.get("inspection_period", "")) or infer_inspection_period(plan_date=step.get("date"), desc=desc)
+    team = clean_cell(step.get("team", "")) or extract_team_from_desc(desc)
+
+    pieces = []
+    if team:
+        pieces.append(f"[{team}]")
+    if period and period != "기타":
+        pieces.append(period)
+
+    # 기존 업무명에 점검시기와 조 정보가 이미 들어있으면 중복 표시하지 않습니다.
+    desc_without_team = re.sub(r"^\s*\[[^\]]*조\]\s*", "", desc).strip()
+    if desc_without_team and desc_without_team not in pieces and not any(desc_without_team == p for p in pieces):
+        if not period or period == "기타" or period not in desc_without_team:
+            pieces.append(desc_without_team)
+
+    body = " ".join(pieces).strip() or desc or "현장점검"
+    return f"[{site}] {body}"
+
 def get_site_detail_defaults(steps):
     """같은 현장의 여러 일정 중 먼저 입력된 상세정보를 기본값으로 사용합니다."""
     defaults = {key: "" for key, _, _ in SITE_DETAIL_FIELDS}
@@ -284,20 +363,30 @@ def format_site_detail_for_popup(step):
     period_start = clean_cell(step.get("construction_start", ""))
     period_end = clean_cell(step.get("construction_end", ""))
     if period_start or period_end:
-        period = f"{period_start or '-'} ~ {period_end or '-'}"
+        construction_period = f"{period_start or '-'} ~ {period_end or '-'}"
     else:
-        period = ""
+        construction_period = ""
 
     lines = [
-        f"🗓️ 점검일정: {step.get('date').strftime('%Y-%m-%d') if step.get('date') else '-'}",
+        f"점검일정: {step.get('date').strftime('%Y-%m-%d') if step.get('date') else '-'}",
     ]
 
+    inspection_pairs = [
+        ("점검시기", step.get("inspection_period", "")),
+        ("담당조", step.get("team", "")),
+        ("점검자", step.get("inspectors", "")),
+    ]
+    for label, value in inspection_pairs:
+        value = clean_cell(value)
+        if value:
+            lines.append(f"{label}: {value}")
+
     detail_pairs = [
-        ("🏢 현장사무실", step.get("site_office", "")),
-        ("📮 별도 우편 주소", step.get("postal_address", "")),
-        ("🚧 착공일~준공일", period),
-        ("💰 총공사비", step.get("total_cost", "")),
-        ("📊 공정률", step.get("progress_rate", "")),
+        ("현장사무실", step.get("site_office", "")),
+        ("별도 우편 주소", step.get("postal_address", "")),
+        ("착공일~준공일", construction_period),
+        ("총공사비", step.get("total_cost", "")),
+        ("공정률", step.get("progress_rate", "")),
     ]
 
     has_detail = False
@@ -311,7 +400,6 @@ def format_site_detail_for_popup(step):
         lines.append("등록된 현장 상세정보가 없습니다.")
 
     return "\n".join(lines)
-
 
 def clear_schedule_edit_query_params():
     for key in ["edit_site", "edit_idx"]:
@@ -342,8 +430,8 @@ def show_schedule_edit_dialog(site_name, step_idx):
     steps = st.session_state.site_data[site_name]
     step = steps[step_idx]
 
-    st.markdown(f"### 🏗️ {site_name}")
-    st.caption("점검 예정일뿐 아니라 현장사무실, 별도 우편 주소, 착공일~준공일, 총공사비, 공정률 등 현장정보까지 함께 수정할 수 있습니다. 현장 기본정보는 같은 현장의 모든 일정에 함께 반영됩니다.")
+    st.markdown(f"### {site_name}")
+    st.caption("점검시기, 담당조, 점검자, 점검 예정일, 현장 기본정보를 함께 수정할 수 있습니다. 현장 기본정보는 같은 현장의 모든 일정에 함께 반영됩니다.")
 
     st.info(format_site_detail_for_popup(step))
 
@@ -352,8 +440,17 @@ def show_schedule_edit_dialog(site_name, step_idx):
         with c1:
             new_date = st.date_input("점검 예정일", value=step.get("date", date.today()))
         with c2:
+            current_period = clean_cell(step.get("inspection_period", "")) or infer_inspection_period(plan_date=step.get("date"), desc=step.get("desc", ""))
+            period_options = selectbox_options_with_current(current_period)
+            new_period = st.selectbox("점검시기", period_options, index=period_options.index(current_period) if current_period in period_options else 0)
+
+        c3, c4 = st.columns([1, 2])
+        with c3:
+            new_team = st.text_input("담당조", value=clean_cell(step.get("team", "")) or extract_team_from_desc(step.get("desc", "")), placeholder="예: 1조")
+        with c4:
             new_desc = st.text_input("점검/업무명", value=clean_cell(step.get("desc", "")))
 
+        new_inspectors = st.text_area("점검자", value=clean_cell(step.get("inspectors", "")), height=80, placeholder="예: 1조 홍길동, 김철수 / 2조 이영희")
         new_memo = st.text_area("메모", value=clean_cell(step.get("memo", "")), height=100)
 
         st.markdown("#### 현장 상세정보 수정")
@@ -371,19 +468,22 @@ def show_schedule_edit_dialog(site_name, step_idx):
 
         save_btn, close_btn = st.columns(2)
         with save_btn:
-            submitted = st.form_submit_button("💾 변경사항 저장", type="primary", use_container_width=True)
+            submitted = st.form_submit_button("변경사항 저장", type="primary", use_container_width=True)
         with close_btn:
             closed = st.form_submit_button("닫기", use_container_width=True)
 
     if submitted:
         steps[step_idx]["date"] = new_date
+        steps[step_idx]["inspection_period"] = new_period
+        steps[step_idx]["team"] = new_team
+        steps[step_idx]["inspectors"] = new_inspectors
         steps[step_idx]["desc"] = new_desc
         steps[step_idx]["memo"] = new_memo
         apply_site_details_to_all_steps(site_name, detail_values)
         steps.sort(key=lambda x: x['date'])
         save_data(st.session_state.site_data)
         clear_schedule_edit_query_params()
-        st.success("현장점검 일정이 변경되었습니다.")
+        st.success("현장정보와 점검일정이 변경되었습니다.")
         st.rerun()
 
     if closed:
@@ -394,19 +494,6 @@ def show_schedule_edit_dialog(site_name, step_idx):
 # ==========================================
 # 📅 4-1. Streamlit 네이티브 달력 렌더링 함수
 # ==========================================
-def get_calendar_event_icon(desc):
-    desc = clean_cell(desc)
-    if "우기" in desc:
-        return "🌧️"
-    if "상시" in desc or "월점검" in desc:
-        return "✅"
-    if "현장점검" in desc:
-        return "🏗️"
-    if "벌점" in desc or "이의제기" in desc or "심의" in desc:
-        return "⚠️"
-    return "📌"
-
-
 def make_streamlit_key(*parts):
     """Streamlit 위젯 key가 중복되지 않도록 안전한 문자열로 변환합니다."""
     raw = "_".join(clean_cell(part) for part in parts)
@@ -417,8 +504,7 @@ def make_streamlit_key(*parts):
 def render_streamlit_calendar(site_data, year, month, selected_site=None):
     """
     components.html() iframe 방식 대신 Streamlit 네이티브 버튼으로 달력을 렌더링합니다.
-    이렇게 해야 달력 안의 현장명 클릭 이벤트가 Python 쪽으로 확실히 전달되어
-    현장점검 일정 변경 다이얼로그가 정상적으로 열립니다.
+    달력 버튼은 아이콘 없이 표시하고, 문구는 좌측 정렬합니다.
     """
     cal = calendar.monthcalendar(year, month)
 
@@ -431,6 +517,20 @@ def render_streamlit_calendar(site_data, year, month, selected_site=None):
         line-height: 1.25;
         font-size: 0.82rem;
         padding: 0.35rem 0.45rem;
+        text-align: left !important;
+        justify-content: flex-start !important;
+        align-items: flex-start !important;
+    }
+    div[data-testid="stVerticalBlockBorderWrapper"] button[kind="secondary"] p,
+    div[data-testid="stVerticalBlockBorderWrapper"] button[data-testid="stBaseButton-secondary"] p {
+        text-align: left !important;
+        width: 100%;
+        margin: 0;
+    }
+    div[data-testid="stVerticalBlockBorderWrapper"] button[data-testid="stBaseButton-secondary"] {
+        text-align: left !important;
+        justify-content: flex-start !important;
+        align-items: flex-start !important;
     }
     .calendar-today-badge {
         display: inline-block;
@@ -473,14 +573,11 @@ def render_streamlit_calendar(site_data, year, month, selected_site=None):
                         continue
 
                     for event_no, (site, step_idx, step) in enumerate(day_events):
-                        desc = clean_cell(step.get('desc', ''))
-                        icon = get_calendar_event_icon(desc)
-                        label = f"{icon} [{site}] {desc}"
-                        if len(label) > 60:
-                            label = label[:57] + "..."
+                        label = make_calendar_event_label(site, step)
+                        if len(label) > 75:
+                            label = label[:72] + "..."
 
-                        # 마우스를 올렸을 때 긴 미리보기(tooltip)가 뜨지 않도록 help 옵션은 사용하지 않습니다.
-                        # 현장명을 클릭하면 바로 현장정보/점검일정 수정 다이얼로그가 열립니다.
+                        # help 옵션을 넣지 않아 마우스 오버 미리보기가 뜨지 않습니다.
                         btn_key = make_streamlit_key("cal_btn", year, month, week_idx, col_idx, event_no, site, step_idx)
                         if st.button(label, key=btn_key, use_container_width=True):
                             show_schedule_edit_dialog(site, step_idx)
@@ -912,6 +1009,12 @@ def load_data():
                     "memo": memo,
                     "files": files_list,
                 }
+                for key, label, _ in STEP_EXTRA_FIELDS:
+                    step[key] = clean_cell(row.get(label, ''))
+                if not step.get("inspection_period"):
+                    step["inspection_period"] = infer_inspection_period(plan_date=date_obj, desc=desc)
+                if not step.get("team"):
+                    step["team"] = extract_team_from_desc(desc)
                 for key, label, _ in SITE_DETAIL_FIELDS:
                     step[key] = clean_cell(row.get(label, ''))
 
@@ -941,6 +1044,8 @@ def save_data(site_data):
                         step.get('memo', ''),
                         files_str,
                     ]
+                    for key, _, _ in STEP_EXTRA_FIELDS:
+                        row.append(step.get(key, ''))
                     for key, _, _ in SITE_DETAIL_FIELDS:
                         row.append(step.get(key, ''))
                     writer.writerow(row)
@@ -987,7 +1092,9 @@ def process_excel_schedule(file):
             if not plan_date:
                 continue
 
-            team = get_row_value(row, ["담당조", "점검조", "조"])
+            team = get_row_value(row, ["담당조", "점검조", "조", "반", "담당반"])
+            inspectors = get_row_value(row, ["점검자", "점검자명", "점검자 명", "담당자", "검사자", "참석자"])
+            inspection_period = infer_inspection_period(file.name, row=row, plan_date=plan_date)
             client = get_row_value(row, ["발주처\n(인·허가 기관)", "발주처(인·허가 기관)", "발주처", "인허가기관", "인·허가 기관"])
             status = get_row_value(row, ["공사진행상태", "공사 진행 상태", "진행상태"])
             builder = get_row_value(row, ["시공회사명", "시공사", "시공회사"])
@@ -999,9 +1106,8 @@ def process_excel_schedule(file):
             for key, _, aliases in SITE_DETAIL_FIELDS:
                 detail_values[key] = get_row_value(row, aliases)
 
-            inspection_type = "상시점검" if "상시" in file.name else "우기대비 점검"
             team_str = f"[{team}]" if team else ""
-            desc = f"{team_str} {inspection_type}".strip()
+            desc = f"{team_str} {inspection_period}".strip()
 
             memo_lines = []
             if client: memo_lines.append(f"🏢 발주처: {client}")
@@ -1019,7 +1125,13 @@ def process_excel_schedule(file):
             )
 
             if existing_step:
-                # 같은 일정이 이미 있으면 상세정보만 보강합니다.
+                # 같은 일정이 이미 있으면 상세정보와 점검자 정보를 보강합니다.
+                if inspection_period:
+                    existing_step['inspection_period'] = inspection_period
+                if team:
+                    existing_step['team'] = team
+                if inspectors:
+                    existing_step['inspectors'] = inspectors
                 for key, value in detail_values.items():
                     if value:
                         existing_step[key] = value
@@ -1036,6 +1148,9 @@ def process_excel_schedule(file):
                     "desc": desc,
                     "memo": memo,
                     "files": [],
+                    "inspection_period": inspection_period,
+                    "team": team,
+                    "inspectors": inspectors,
                     **inherited_details,
                 })
                 st.session_state.site_data[site_name].sort(key=lambda x: x['date'])
@@ -1089,6 +1204,17 @@ def main():
         with st.form("add_project_form"):
             new_site_name = st.text_input("프로젝트(현장)명")
             start_date = st.date_input("점검 예정일", value=date.today())
+            default_period = f"{start_date.month}월 상시점검"
+            new_inspection_period = st.selectbox(
+                "점검시기",
+                selectbox_options_with_current(default_period),
+                index=selectbox_options_with_current(default_period).index(default_period)
+            )
+            pp1, pp2 = st.columns(2)
+            with pp1:
+                new_team = st.text_input("담당조", placeholder="예: 1조")
+            with pp2:
+                new_inspectors = st.text_input("점검자", placeholder="예: 홍길동, 김철수")
             new_office = st.text_input("현장사무실")
             new_postal_address = st.text_input("별도 우편 주소")
             f1, f2 = st.columns(2)
@@ -1107,6 +1233,9 @@ def main():
                             "desc": "현장점검 실시",
                             "memo": "",
                             "files": [],
+                            "inspection_period": new_inspection_period,
+                            "team": new_team,
+                            "inspectors": new_inspectors,
                             "site_office": new_office,
                             "postal_address": new_postal_address,
                             "construction_start": new_construction_start,
@@ -1139,7 +1268,7 @@ def main():
                 st.rerun()
 
     st.subheader("🗓️ 프로젝트 전체 일정 캘린더")
-    st.caption("현장명을 클릭하면 현장정보와 점검일정을 바로 수정할 수 있습니다. 마우스 오버 미리보기는 표시하지 않습니다.")
+    st.caption("현장명을 클릭하면 점검시기, 담당조, 점검자, 현장정보와 점검일정을 바로 수정할 수 있습니다. 마우스 오버 미리보기는 표시하지 않습니다.")
     c1, c2, c3 = st.columns([1, 4, 1])
     with c1:
         if st.button("◀ 이전 달", use_container_width=True):
@@ -1195,14 +1324,24 @@ def main():
         with add_col1:
             with st.expander("📌 단순 일정 수동 추가"):
                 e1, e2 = st.columns([1, 2])
-                with e1: custom_date = st.date_input("날짜", key="c_date")
-                with e2: custom_desc = st.text_input("업무 내용", key="c_desc")
+                with e1:
+                    custom_date = st.date_input("날짜", key="c_date")
+                    default_custom_period = f"{custom_date.month}월 상시점검"
+                    custom_period_options = selectbox_options_with_current(default_custom_period)
+                    custom_period = st.selectbox("점검시기", custom_period_options, index=custom_period_options.index(default_custom_period), key="c_period")
+                with e2:
+                    custom_desc = st.text_input("업무 내용", key="c_desc")
+                    custom_team = st.text_input("담당조", key="c_team", placeholder="예: 1조")
+                    custom_inspectors = st.text_input("점검자", key="c_inspectors", placeholder="예: 홍길동, 김철수")
                 if st.button("일정 끼워넣기", use_container_width=True):
                     steps.append({
                         "date": adjust_weekend(custom_date),
-                        "desc": custom_desc,
+                        "desc": custom_desc or custom_period,
                         "memo": "",
                         "files": [],
+                        "inspection_period": custom_period,
+                        "team": custom_team,
+                        "inspectors": custom_inspectors,
                         **get_site_detail_defaults(steps),
                     })
                     steps.sort(key=lambda x: x['date'])
@@ -1228,6 +1367,9 @@ def main():
                                 "desc": desc,
                                 "memo": "",
                                 "files": [],
+                                "inspection_period": "기타",
+                                "team": "",
+                                "inspectors": "",
                                 **get_site_detail_defaults(steps),
                             })
                         steps.sort(key=lambda x: x['date'])
@@ -1264,10 +1406,26 @@ def main():
                 c1, c2, c3 = st.columns([2, 5, 4])
                 with c1:
                     new_date = st.date_input("기한", value=step['date'], key=f"date_{actual_idx}")
+                    current_period = clean_cell(step.get('inspection_period', '')) or infer_inspection_period(plan_date=step.get('date'), desc=step.get('desc', ''))
+                    current_team = clean_cell(step.get('team', '')) or extract_team_from_desc(step.get('desc', ''))
+                    current_inspectors = clean_cell(step.get('inspectors', ''))
+                    period_options = selectbox_options_with_current(current_period)
+                    new_period = st.selectbox("점검시기", period_options, index=period_options.index(current_period) if current_period in period_options else 0, key=f"period_{actual_idx}")
+                    new_team = st.text_input("담당조", value=current_team, key=f"team_{actual_idx}")
                     new_desc = st.text_input("업무명", value=step['desc'], key=f"desc_{actual_idx}")
-                    if new_date != step['date'] or new_desc != step['desc']:
+                    new_inspectors = st.text_area("점검자", value=current_inspectors, height=70, key=f"inspectors_{actual_idx}")
+                    if (
+                        new_date != step['date']
+                        or new_desc != step['desc']
+                        or new_period != current_period
+                        or new_team != current_team
+                        or new_inspectors != current_inspectors
+                    ):
                         steps[actual_idx]['date'] = new_date
+                        steps[actual_idx]['inspection_period'] = new_period
+                        steps[actual_idx]['team'] = new_team
                         steps[actual_idx]['desc'] = new_desc
+                        steps[actual_idx]['inspectors'] = new_inspectors
                         steps.sort(key=lambda x: x['date'])
                         save_data(st.session_state.site_data)
                         st.rerun()
