@@ -739,16 +739,15 @@ def main():
             else: st.session_state.cal_month += 1
             st.rerun()
 
-	calendar_html = render_html_calendar(
-		st.session_state.site_data,
-		st.session_state.cal_year,
-		st.session_state.cal_month,
-		selected_site
-	)
+    calendar_html = render_html_calendar(
+        st.session_state.site_data,
+        st.session_state.cal_year,
+        st.session_state.cal_month,
+        selected_site
+    )
 
-	components.html(calendar_html, height=900, scrolling=True)
-	
-	
+    components.html(calendar_html, height=900, scrolling=True)
+		
 	st.divider()
 
     if selected_site != "전체 현장":
