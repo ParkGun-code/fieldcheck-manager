@@ -19,6 +19,7 @@ import io
 import pandas as pd
 
 import json
+import re
 import html as html_lib
 from textwrap import dedent
 
@@ -177,6 +178,217 @@ def show_file_dialog(file_path, file_name):
         st.warning("⚠️ 웹 미리보기를 지원하지 않는 형식입니다. 리스트의 체크박스를 통해 다운로드해 주세요.")
 
 # ==========================================
+# 📌 현장 상세정보 공통 처리
+# ==========================================
+SITE_DETAIL_FIELDS = [
+    ("site_office", "현장사무실", ["현장사무실", "현장 사무실", "현장사무소", "현장 사무소", "현장사무실 주소", "사무실주소"]),
+    ("postal_address", "별도 우편 주소", ["별도 우편 주소", "별도우편주소", "우편주소", "우편 주소", "별도주소", "주소"]),
+    ("construction_start", "착공일", ["착공일", "착공 일자", "공사시작일", "공사 시작일", "착수일"]),
+    ("construction_end", "준공일", ["준공일", "준공 일자", "공사종료일", "공사 종료일", "완료일"]),
+    ("total_cost", "총공사비", ["총공사비", "총 공사비", "공사비", "도급액", "계약금액", "총사업비"]),
+    ("progress_rate", "공정률", ["공정률", "공정율", "진도율", "공사진행률"]),
+]
+
+DB_COLUMNS = ['No', '현장명', '날짜', '업무명', '메모', '파일경로'] + [label for _, label, _ in SITE_DETAIL_FIELDS]
+
+
+def clean_cell(value):
+    """엑셀/CSV에서 읽은 빈값, NaN, 날짜값을 화면/CSV 저장에 적합한 문자열로 정리합니다."""
+    if value is None:
+        return ""
+    try:
+        if pd.isna(value):
+            return ""
+    except Exception:
+        pass
+    if isinstance(value, pd.Timestamp):
+        return value.strftime('%Y-%m-%d')
+    if isinstance(value, datetime):
+        return value.strftime('%Y-%m-%d')
+    if isinstance(value, date):
+        return value.strftime('%Y-%m-%d')
+    value_str = str(value).strip()
+    if value_str.lower() in ["nan", "nat", "none", "null"]:
+        return ""
+    return value_str
+
+
+def normalize_column_name(value):
+    return re.sub(r"\s+", "", str(value).replace("\n", "")).lower()
+
+
+def get_row_value(row, aliases):
+    """엑셀 컬럼명이 줄바꿈/공백이 달라도 원하는 값을 찾아옵니다."""
+    normalized_row = {normalize_column_name(col): val for col, val in row.items()}
+    for alias in aliases:
+        value = normalized_row.get(normalize_column_name(alias), "")
+        cleaned = clean_cell(value)
+        if cleaned:
+            return cleaned
+    return ""
+
+
+def parse_date_value(value, default_year=None):
+    """'06.17.', '2026.06.17', 엑셀 날짜값을 date 객체로 변환합니다."""
+    if value is None:
+        return None
+    try:
+        if pd.isna(value):
+            return None
+    except Exception:
+        pass
+    if isinstance(value, pd.Timestamp):
+        return value.date()
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+
+    value_str = clean_cell(value)
+    if not value_str:
+        return None
+
+    numbers = re.findall(r"\d+", value_str)
+    try:
+        if len(numbers) >= 3:
+            year = int(numbers[0])
+            if year < 100:
+                year += 2000
+            return date(year, int(numbers[1]), int(numbers[2]))
+        if len(numbers) >= 2:
+            year = default_year or date.today().year
+            return date(year, int(numbers[0]), int(numbers[1]))
+    except Exception:
+        return None
+    return None
+
+
+def get_site_detail_defaults(steps):
+    """같은 현장의 여러 일정 중 먼저 입력된 상세정보를 기본값으로 사용합니다."""
+    defaults = {key: "" for key, _, _ in SITE_DETAIL_FIELDS}
+    for step in steps:
+        for key, _, _ in SITE_DETAIL_FIELDS:
+            if not defaults[key] and clean_cell(step.get(key, "")):
+                defaults[key] = clean_cell(step.get(key, ""))
+    return defaults
+
+
+def apply_site_details_to_all_steps(site_name, detail_values):
+    """현장 기본정보는 같은 현장의 모든 일정에 동일하게 반영합니다."""
+    for step in st.session_state.site_data.get(site_name, []):
+        for key, value in detail_values.items():
+            step[key] = value
+
+
+def format_site_detail_for_popup(step):
+    period_start = clean_cell(step.get("construction_start", ""))
+    period_end = clean_cell(step.get("construction_end", ""))
+    if period_start or period_end:
+        period = f"{period_start or '-'} ~ {period_end or '-'}"
+    else:
+        period = ""
+
+    lines = [
+        f"🗓️ 점검일정: {step.get('date').strftime('%Y-%m-%d') if step.get('date') else '-'}",
+    ]
+
+    detail_pairs = [
+        ("🏢 현장사무실", step.get("site_office", "")),
+        ("📮 별도 우편 주소", step.get("postal_address", "")),
+        ("🚧 착공일~준공일", period),
+        ("💰 총공사비", step.get("total_cost", "")),
+        ("📊 공정률", step.get("progress_rate", "")),
+    ]
+
+    has_detail = False
+    for label, value in detail_pairs:
+        value = clean_cell(value)
+        if value:
+            lines.append(f"{label}: {value}")
+            has_detail = True
+
+    if not has_detail:
+        lines.append("등록된 현장 상세정보가 없습니다.")
+
+    return "\n".join(lines)
+
+
+def clear_schedule_edit_query_params():
+    for key in ["edit_site", "edit_idx"]:
+        if key in st.query_params:
+            del st.query_params[key]
+
+
+@st.dialog("🗓️ 현장점검 일정 변경", width="large")
+def show_schedule_edit_dialog(site_name, step_idx):
+    make_dialog_draggable()
+
+    try:
+        step_idx = int(step_idx)
+    except Exception:
+        st.error("수정할 일정 정보를 찾을 수 없습니다.")
+        if st.button("닫기", type="primary"):
+            clear_schedule_edit_query_params()
+            st.rerun()
+        return
+
+    if site_name not in st.session_state.site_data or step_idx < 0 or step_idx >= len(st.session_state.site_data[site_name]):
+        st.error("선택한 현장 또는 일정이 존재하지 않습니다. 화면을 새로고침한 뒤 다시 시도해 주세요.")
+        if st.button("닫기", type="primary"):
+            clear_schedule_edit_query_params()
+            st.rerun()
+        return
+
+    steps = st.session_state.site_data[site_name]
+    step = steps[step_idx]
+
+    st.markdown(f"### 🏗️ {site_name}")
+    st.caption("달력에서 선택한 일정과 현장 기본정보를 수정합니다. 현장 기본정보는 같은 현장의 모든 일정에 함께 반영됩니다.")
+
+    with st.form(f"calendar_edit_form_{site_name}_{step_idx}"):
+        c1, c2 = st.columns([1, 2])
+        with c1:
+            new_date = st.date_input("점검 예정일", value=step.get("date", date.today()))
+        with c2:
+            new_desc = st.text_input("점검/업무명", value=clean_cell(step.get("desc", "")))
+
+        new_memo = st.text_area("메모", value=clean_cell(step.get("memo", "")), height=100)
+
+        st.markdown("#### 현장 상세정보")
+        defaults = get_site_detail_defaults(steps)
+        d1, d2 = st.columns(2)
+        detail_values = {}
+        with d1:
+            detail_values["site_office"] = st.text_input("현장사무실", value=defaults.get("site_office", ""))
+            detail_values["construction_start"] = st.text_input("착공일", value=defaults.get("construction_start", ""), placeholder="예: 2026-03-01")
+            detail_values["total_cost"] = st.text_input("총공사비", value=defaults.get("total_cost", ""), placeholder="예: 120억 원")
+        with d2:
+            detail_values["postal_address"] = st.text_input("별도 우편 주소", value=defaults.get("postal_address", ""))
+            detail_values["construction_end"] = st.text_input("준공일", value=defaults.get("construction_end", ""), placeholder="예: 2027-12-31")
+            detail_values["progress_rate"] = st.text_input("공정률", value=defaults.get("progress_rate", ""), placeholder="예: 42%")
+
+        save_btn, close_btn = st.columns(2)
+        with save_btn:
+            submitted = st.form_submit_button("💾 변경사항 저장", type="primary", use_container_width=True)
+        with close_btn:
+            closed = st.form_submit_button("닫기", use_container_width=True)
+
+    if submitted:
+        steps[step_idx]["date"] = new_date
+        steps[step_idx]["desc"] = new_desc
+        steps[step_idx]["memo"] = new_memo
+        apply_site_details_to_all_steps(site_name, detail_values)
+        steps.sort(key=lambda x: x['date'])
+        save_data(st.session_state.site_data)
+        clear_schedule_edit_query_params()
+        st.success("현장점검 일정이 변경되었습니다.")
+        st.rerun()
+
+    if closed:
+        clear_schedule_edit_query_params()
+        st.rerun()
+
+# ==========================================
 # 📅 4. 중앙 달력 렌더링 함수
 # ==========================================
 def render_html_calendar(site_data, year, month, selected_site=None):
@@ -254,6 +466,7 @@ def render_html_calendar(site_data, year, month, selected_site=None):
 
         .calendar-event:hover {
             filter: brightness(0.95);
+            transform: translateY(-1px);
         }
 
         #customModal {
@@ -268,8 +481,8 @@ def render_html_calendar(site_data, year, month, selected_site=None):
             border: 1px solid #ccc;
             border-radius: 12px;
             box-shadow: 0 8px 16px rgba(0,0,0,0.3);
-            width: 450px;
-            max-width: 90%;
+            width: 560px;
+            max-width: 92%;
         }
 
         #modalSiteName {
@@ -282,48 +495,84 @@ def render_html_calendar(site_data, year, month, selected_site=None):
         #modalDesc {
             font-weight: bold;
             color: #2563eb;
-            margin-bottom: 5px;
+            margin-bottom: 8px;
         }
 
-        #modalMemo {
+        #modalDetail, #modalMemo {
             white-space: pre-wrap;
             font-family: 'Malgun Gothic', sans-serif;
             font-size: 14px;
             color: #4b5563;
             background: #f3f4f6;
-            padding: 15px;
+            padding: 14px;
             border-radius: 8px;
-            line-height: 1.5;
-            max-height: 300px;
+            line-height: 1.55;
+            max-height: 220px;
             overflow-y: auto;
         }
 
-        .modal-close-btn {
-            float: right;
+        #modalMemoTitle {
+            margin: 12px 0 6px 0;
+            font-weight: bold;
+            color: #374151;
+        }
+
+        .modal-actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 8px;
+            margin-top: 14px;
+        }
+
+        .modal-close-btn, .modal-edit-btn {
             padding: 8px 16px;
             cursor: pointer;
-            background: #3b82f6;
             color: white;
             border: none;
             border-radius: 6px;
             font-weight: bold;
+        }
+
+        .modal-close-btn {
+            background: #6b7280;
+        }
+
+        .modal-edit-btn {
+            background: #2563eb;
         }
     </style>
 
     <div id="customModal">
         <h3 id="modalSiteName">현장명</h3>
         <p id="modalDesc"></p>
+        <pre id="modalDetail"></pre>
+        <div id="modalMemoTitle">메모</div>
         <pre id="modalMemo"></pre>
-        <button class="modal-close-btn" onclick="closeSiteInfo()">닫기</button>
-        <div style="clear: both;"></div>
+        <div class="modal-actions">
+            <button class="modal-edit-btn" onclick="openEditDialog()">점검일정 변경</button>
+            <button class="modal-close-btn" onclick="closeSiteInfo()">닫기</button>
+        </div>
     </div>
 
     <script>
-        function openSiteInfo(site, desc, memo) {
+        let selectedSiteForEdit = '';
+        let selectedIdxForEdit = '';
+
+        function openSiteInfo(site, desc, memo, detail, idx) {
+            selectedSiteForEdit = site || '';
+            selectedIdxForEdit = String(idx || '0');
             document.getElementById('modalSiteName').innerText = site || '';
             document.getElementById('modalDesc').innerText = desc || '';
-            document.getElementById('modalMemo').innerText = memo || '';
+            document.getElementById('modalDetail').innerText = detail || '';
+            document.getElementById('modalMemo').innerText = memo || '등록된 메모가 없습니다.';
             document.getElementById('customModal').style.display = 'block';
+        }
+
+        function openEditDialog() {
+            const url = new URL(window.parent.location.href);
+            url.searchParams.set('edit_site', selectedSiteForEdit);
+            url.searchParams.set('edit_idx', selectedIdxForEdit);
+            window.parent.location.href = url.toString();
         }
 
         function closeSiteInfo() {
@@ -357,12 +606,13 @@ def render_html_calendar(site_data, year, month, selected_site=None):
                 if selected_site and selected_site != "전체 현장" and site != selected_site:
                     continue
 
-                for step in steps:
+                for step_idx, step in enumerate(steps):
                     if step.get('date') != current_date:
                         continue
 
-                    desc = str(step.get('desc', ''))
-                    memo = str(step.get('memo', ''))
+                    desc = clean_cell(step.get('desc', ''))
+                    memo = clean_cell(step.get('memo', ''))
+                    detail = format_site_detail_for_popup(step)
 
                     if "우기" in desc:
                         event_bg, event_border = "#dbeafe", "#1d4ed8"
@@ -379,11 +629,12 @@ def render_html_calendar(site_data, year, month, selected_site=None):
                     site_arg = html_lib.escape(json.dumps(site, ensure_ascii=False), quote=True)
                     desc_arg = html_lib.escape(json.dumps(desc, ensure_ascii=False), quote=True)
                     memo_arg = html_lib.escape(json.dumps(memo, ensure_ascii=False), quote=True)
+                    detail_arg = html_lib.escape(json.dumps(detail, ensure_ascii=False), quote=True)
 
                     event_html = f"""
                     <div
                         class="calendar-event"
-                        onclick="openSiteInfo({site_arg}, {desc_arg}, {memo_arg})"
+                        onclick="openSiteInfo({site_arg}, {desc_arg}, {memo_arg}, {detail_arg}, {step_idx})"
                         style="background-color:{event_bg}; border-left-color:{event_border};"
                     >
                         <b>[{site_label}]</b> {desc_label}
@@ -530,44 +781,76 @@ def adjust_weekend(date_obj):
     if wd == 6: return date_obj + timedelta(days=1)
     return date_obj
 
+
 def load_data():
     site_data = {}
-    if not os.path.exists(DB_FILENAME): return site_data
+    if not os.path.exists(DB_FILENAME):
+        return site_data
     try:
-        with open(DB_FILENAME, 'r', encoding='utf-8-sig') as f:
-            reader = csv.reader(f)
-            header = next(reader, None)
-            if not header: return site_data
+        with open(DB_FILENAME, 'r', encoding='utf-8-sig', newline='') as f:
+            reader = csv.DictReader(f)
+            if not reader.fieldnames:
+                return site_data
+
             for row in reader:
-                if len(row) < 6: continue
-                name = row[1].strip()
-                if not name: continue
-                if name not in site_data: site_data[name] = []
-                date_str, desc, memo, files_str = row[2], row[3], row[4], row[5]
-                if not date_str or not desc: continue
-                files_list = files_str.split("|") if files_str else []
-                try: 
-                    date_obj = datetime.strptime(date_str, '%Y-%m-%d').date()
-                    site_data[name].append({"date": date_obj, "desc": desc, "memo": memo, "files": files_list})
-                except:
+                name = clean_cell(row.get('현장명', ''))
+                if not name:
                     continue
-        for name in site_data: site_data[name].sort(key=lambda x: x['date'])
-    except Exception as e: st.error(f"데이터 로드 오류: {e}")
+
+                date_str = clean_cell(row.get('날짜', ''))
+                desc = clean_cell(row.get('업무명', ''))
+                memo = clean_cell(row.get('메모', ''))
+                files_str = clean_cell(row.get('파일경로', ''))
+                if not date_str or not desc:
+                    continue
+
+                date_obj = parse_date_value(date_str)
+                if not date_obj:
+                    continue
+
+                files_list = files_str.split("|") if files_str else []
+                step = {
+                    "date": date_obj,
+                    "desc": desc,
+                    "memo": memo,
+                    "files": files_list,
+                }
+                for key, label, _ in SITE_DETAIL_FIELDS:
+                    step[key] = clean_cell(row.get(label, ''))
+
+                site_data.setdefault(name, []).append(step)
+
+        for name in site_data:
+            site_data[name].sort(key=lambda x: x['date'])
+    except Exception as e:
+        st.error(f"데이터 로드 오류: {e}")
     return site_data
+
 
 def save_data(site_data):
     try:
         with open(DB_FILENAME, 'w', newline='', encoding='utf-8-sig') as f:
             writer = csv.writer(f)
-            writer.writerow(['No', '현장명', '날짜', '업무명', '메모', '파일경로'])
+            writer.writerow(DB_COLUMNS)
             row_num = 1
             for name in sorted(site_data.keys()):
                 for step in site_data[name]:
                     files_str = "|".join(step.get('files', []))
-                    writer.writerow([row_num, name, step['date'].strftime('%Y-%m-%d'), step['desc'], step.get('memo', ''), files_str])
+                    row = [
+                        row_num,
+                        name,
+                        step['date'].strftime('%Y-%m-%d'),
+                        step.get('desc', ''),
+                        step.get('memo', ''),
+                        files_str,
+                    ]
+                    for key, _, _ in SITE_DETAIL_FIELDS:
+                        row.append(step.get(key, ''))
+                    writer.writerow(row)
                     row_num += 1
     except Exception as e:
         st.error(f"저장 실패: {e}")
+
 
 # 💡 엑셀/CSV 일괄 등록 로직
 def process_excel_schedule(file):
@@ -575,18 +858,18 @@ def process_excel_schedule(file):
         if file.name.lower().endswith('.csv'):
             try:
                 df = pd.read_csv(file, encoding='utf-8-sig', header=None)
-            except:
+            except Exception:
                 df = pd.read_csv(file, encoding='cp949', header=None)
         else:
             df = pd.read_excel(file, header=None)
-        
+
         header_idx = -1
         for i, row in df.iterrows():
             row_str = "".join(str(val) for val in row.values)
             if "공사명" in row_str and "점검예정일" in row_str:
                 header_idx = i
                 break
-                
+
         if header_idx != -1:
             df.columns = df.iloc[header_idx]
             df = df.iloc[header_idx + 1:]
@@ -595,63 +878,80 @@ def process_excel_schedule(file):
             return
 
         success_count = 0
+        updated_count = 0
+        default_year = date.today().year
+
         for idx, row in df.iterrows():
-            site_name = str(row.get('공사명', '')).strip()
-            if not site_name or site_name == 'nan': continue
-            
-            date_raw = str(row.get('점검예정일', '')).strip()
-            team = str(row.get('담당조', '')).strip()
-            client = str(row.get('발주처\n(인·허가 기관)', row.get('발주처', ''))).strip()
-            status = str(row.get('공사진행상태', '')).strip()
-            builder = str(row.get('시공회사명', '')).strip()
-            supervisor = str(row.get('감리회사명', '')).strip()
-            manager = str(row.get('성명', '')).strip()
-            phone = str(row.get('전화번호', '')).strip()
-            
-            try:
-                parts = [p for p in date_raw.split('.') if p.strip().isdigit()]
-                if len(parts) >= 2:
-                    plan_date = date(2026, int(parts[0]), int(parts[1]))
-                else:
-                    continue 
-            except:
-                continue 
-            
+            site_name = get_row_value(row, ["공사명", "현장명", "프로젝트명"])
+            if not site_name:
+                continue
+
+            plan_date = parse_date_value(get_row_value(row, ["점검예정일", "점검 예정일", "점검일", "날짜"]), default_year=default_year)
+            if not plan_date:
+                continue
+
+            team = get_row_value(row, ["담당조", "점검조", "조"])
+            client = get_row_value(row, ["발주처\n(인·허가 기관)", "발주처(인·허가 기관)", "발주처", "인허가기관", "인·허가 기관"])
+            status = get_row_value(row, ["공사진행상태", "공사 진행 상태", "진행상태"])
+            builder = get_row_value(row, ["시공회사명", "시공사", "시공회사"])
+            supervisor = get_row_value(row, ["감리회사명", "감리사", "감리회사"])
+            manager = get_row_value(row, ["성명", "현장대리인", "담당자"])
+            phone = get_row_value(row, ["전화번호", "연락처", "휴대폰"])
+
+            detail_values = {}
+            for key, _, aliases in SITE_DETAIL_FIELDS:
+                detail_values[key] = get_row_value(row, aliases)
+
             inspection_type = "상시점검" if "상시" in file.name else "우기대비 점검"
-            team_str = f"[{team}]" if team and team != 'nan' else ""
+            team_str = f"[{team}]" if team else ""
             desc = f"{team_str} {inspection_type}".strip()
-            
+
             memo_lines = []
-            if client and client != 'nan': memo_lines.append(f"🏢 발주처: {client}")
-            if builder and builder != 'nan': memo_lines.append(f"👷 시공사: {builder}")
-            if supervisor and supervisor != 'nan': memo_lines.append(f"🔍 감리사: {supervisor}")
-            if manager and manager != 'nan': memo_lines.append(f"👤 현장대리인: {manager} ({phone})")
-            if status and status != 'nan': memo_lines.append(f"📌 공사진행상태: {status}")
-            
+            if client: memo_lines.append(f"🏢 발주처: {client}")
+            if builder: memo_lines.append(f"👷 시공사: {builder}")
+            if supervisor: memo_lines.append(f"🔍 감리사: {supervisor}")
+            if manager: memo_lines.append(f"👤 현장대리인: {manager} ({phone})" if phone else f"👤 현장대리인: {manager}")
+            if status: memo_lines.append(f"📌 공사진행상태: {status}")
             memo = "\n".join(memo_lines)
-            
-            if site_name not in st.session_state.site_data:
-                st.session_state.site_data[site_name] = []
-                
-            existing_descs = [s['desc'] for s in st.session_state.site_data[site_name] if s['date'] == plan_date]
-            if desc not in existing_descs:
+
+            st.session_state.site_data.setdefault(site_name, [])
+
+            existing_step = next(
+                (s for s in st.session_state.site_data[site_name] if s['date'] == plan_date and s['desc'] == desc),
+                None
+            )
+
+            if existing_step:
+                # 같은 일정이 이미 있으면 상세정보만 보강합니다.
+                for key, value in detail_values.items():
+                    if value:
+                        existing_step[key] = value
+                if memo and not existing_step.get('memo'):
+                    existing_step['memo'] = memo
+                updated_count += 1
+            else:
+                inherited_details = get_site_detail_defaults(st.session_state.site_data[site_name])
+                for key, value in detail_values.items():
+                    if value:
+                        inherited_details[key] = value
                 st.session_state.site_data[site_name].append({
                     "date": plan_date,
                     "desc": desc,
                     "memo": memo,
-                    "files": []
+                    "files": [],
+                    **inherited_details,
                 })
                 st.session_state.site_data[site_name].sort(key=lambda x: x['date'])
                 success_count += 1
-                
-        if success_count > 0:
+
+        if success_count > 0 or updated_count > 0:
             save_data(st.session_state.site_data)
-            st.success(f"총 {success_count}건의 점검 일정이 엑셀에서 성공적으로 등록되었습니다!")
-            time.sleep(1) 
+            st.success(f"신규 {success_count}건 등록, 기존 {updated_count}건 상세정보 보강 완료")
+            time.sleep(1)
             st.rerun()
         else:
-            st.warning("등록할 유효한 일정이 없습니다. (날짜가 '06.17.' 형식인지 확인하세요)")
-            
+            st.warning("등록할 유효한 일정이 없습니다. 날짜가 '06.17.' 또는 '2026.06.17' 형식인지 확인하세요.")
+
     except Exception as e:
         st.error(f"엑셀 처리 중 오류 발생: {e}")
 
@@ -675,6 +975,11 @@ def main():
     if "cal_year" not in st.session_state: st.session_state.cal_year = date.today().year
     if "cal_month" not in st.session_state: st.session_state.cal_month = date.today().month
 
+    edit_site = st.query_params.get("edit_site")
+    edit_idx = st.query_params.get("edit_idx")
+    if edit_site is not None and edit_idx is not None:
+        show_schedule_edit_dialog(edit_site, edit_idx)
+
     st.title("🏗️ 건설현장 벌점 및 문서 통합 관리 시스템")
 
     with st.sidebar:
@@ -692,10 +997,31 @@ def main():
         with st.form("add_project_form"):
             new_site_name = st.text_input("프로젝트(현장)명")
             start_date = st.date_input("점검 예정일", value=date.today())
+            new_office = st.text_input("현장사무실")
+            new_postal_address = st.text_input("별도 우편 주소")
+            f1, f2 = st.columns(2)
+            with f1:
+                new_construction_start = st.text_input("착공일", placeholder="예: 2026-03-01")
+                new_total_cost = st.text_input("총공사비", placeholder="예: 120억 원")
+            with f2:
+                new_construction_end = st.text_input("준공일", placeholder="예: 2027-12-31")
+                new_progress_rate = st.text_input("공정률", placeholder="예: 42%")
+
             if st.form_submit_button("초기 점검일정 생성"):
                 if new_site_name and new_site_name not in st.session_state.site_data:
                     st.session_state.site_data[new_site_name] = [
-                        {"date": start_date, "desc": "현장점검 실시", "memo": "", "files": []}
+                        {
+                            "date": start_date,
+                            "desc": "현장점검 실시",
+                            "memo": "",
+                            "files": [],
+                            "site_office": new_office,
+                            "postal_address": new_postal_address,
+                            "construction_start": new_construction_start,
+                            "construction_end": new_construction_end,
+                            "total_cost": new_total_cost,
+                            "progress_rate": new_progress_rate,
+                        }
                     ]
                     save_data(st.session_state.site_data)
                     st.rerun()
@@ -754,6 +1080,25 @@ def main():
         st.subheader(f"📂 [{selected_site}] 세부 일정 및 파일 관리")
         steps = st.session_state.site_data[selected_site]
 
+        with st.expander("🏗️ 현장 기본정보 수정", expanded=False):
+            defaults = get_site_detail_defaults(steps)
+            with st.form(f"site_detail_form_{selected_site}"):
+                sd1, sd2 = st.columns(2)
+                detail_values = {}
+                with sd1:
+                    detail_values["site_office"] = st.text_input("현장사무실", value=defaults.get("site_office", ""))
+                    detail_values["construction_start"] = st.text_input("착공일", value=defaults.get("construction_start", ""))
+                    detail_values["total_cost"] = st.text_input("총공사비", value=defaults.get("total_cost", ""))
+                with sd2:
+                    detail_values["postal_address"] = st.text_input("별도 우편 주소", value=defaults.get("postal_address", ""))
+                    detail_values["construction_end"] = st.text_input("준공일", value=defaults.get("construction_end", ""))
+                    detail_values["progress_rate"] = st.text_input("공정률", value=defaults.get("progress_rate", ""))
+                if st.form_submit_button("현장 기본정보 저장", type="primary", use_container_width=True):
+                    apply_site_details_to_all_steps(selected_site, detail_values)
+                    save_data(st.session_state.site_data)
+                    st.success("현장 기본정보가 저장되었습니다.")
+                    st.rerun()
+
         add_col1, add_col2 = st.columns(2)
         
         with add_col1:
@@ -762,7 +1107,13 @@ def main():
                 with e1: custom_date = st.date_input("날짜", key="c_date")
                 with e2: custom_desc = st.text_input("업무 내용", key="c_desc")
                 if st.button("일정 끼워넣기", use_container_width=True):
-                    steps.append({"date": adjust_weekend(custom_date), "desc": custom_desc, "memo": "", "files": []})
+                    steps.append({
+                        "date": adjust_weekend(custom_date),
+                        "desc": custom_desc,
+                        "memo": "",
+                        "files": [],
+                        **get_site_detail_defaults(steps),
+                    })
                     steps.sort(key=lambda x: x['date'])
                     save_data(st.session_state.site_data)
                     st.rerun()
@@ -781,7 +1132,13 @@ def main():
                         curr = penalty_base_date
                         for days, desc in PENALTY_INTERVALS:
                             curr = adjust_weekend(curr + timedelta(days=days))
-                            steps.append({"date": curr, "desc": desc, "memo": "", "files": []})
+                            steps.append({
+                                "date": curr,
+                                "desc": desc,
+                                "memo": "",
+                                "files": [],
+                                **get_site_detail_defaults(steps),
+                            })
                         steps.sort(key=lambda x: x['date'])
                         save_data(st.session_state.site_data)
                         st.rerun()
