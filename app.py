@@ -57,8 +57,8 @@ def hwp_to_pdf(hwp_path):
 # ==========================================
 st.set_page_config(page_title="건설현장 벌점 통합 관리 웹", page_icon="🏛️", layout="wide")
 
-SHARED_USER_ID = "admin"
-SHARED_PASSWORD = "password123!"
+SHARED_USER_ID = "molitdj"
+SHARED_PASSWORD = "eowjscjd1!"
 
 GEMINI_API_KEY = "AIzaSyBRSKqPy-IVLqAqICwaJmli5YKifNcRdoA"  
 pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
