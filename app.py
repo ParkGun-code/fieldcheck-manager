@@ -319,7 +319,7 @@ def clear_schedule_edit_query_params():
             del st.query_params[key]
 
 
-@st.dialog("🗓️ 현장정보 확인 및 점검일정 변경", width="large")
+@st.dialog("🛠️ 현장정보 및 점검일정 수정", width="large")
 def show_schedule_edit_dialog(site_name, step_idx):
     make_dialog_draggable()
 
@@ -343,7 +343,7 @@ def show_schedule_edit_dialog(site_name, step_idx):
     step = steps[step_idx]
 
     st.markdown(f"### 🏗️ {site_name}")
-    st.caption("현재 현장정보를 확인하고, 점검 예정일·업무명·메모·현장 기본정보를 바로 수정할 수 있습니다. 현장 기본정보는 같은 현장의 모든 일정에 함께 반영됩니다.")
+    st.caption("점검 예정일뿐 아니라 현장사무실, 별도 우편 주소, 착공일~준공일, 총공사비, 공정률 등 현장정보까지 함께 수정할 수 있습니다. 현장 기본정보는 같은 현장의 모든 일정에 함께 반영됩니다.")
 
     st.info(format_site_detail_for_popup(step))
 
@@ -356,7 +356,7 @@ def show_schedule_edit_dialog(site_name, step_idx):
 
         new_memo = st.text_area("메모", value=clean_cell(step.get("memo", "")), height=100)
 
-        st.markdown("#### 현장 상세정보")
+        st.markdown("#### 현장 상세정보 수정")
         defaults = get_site_detail_defaults(steps)
         d1, d2 = st.columns(2)
         detail_values = {}
@@ -476,17 +476,13 @@ def render_streamlit_calendar(site_data, year, month, selected_site=None):
                         desc = clean_cell(step.get('desc', ''))
                         icon = get_calendar_event_icon(desc)
                         label = f"{icon} [{site}] {desc}"
-                        if len(label) > 70:
-                            label = label[:67] + "..."
+                        if len(label) > 60:
+                            label = label[:57] + "..."
 
-                        help_text = (
-                            f"현장명: {site}\n"
-                            f"업무명: {desc}\n"
-                            f"{format_site_detail_for_popup(step)}\n"
-                            f"메모: {clean_cell(step.get('memo', '')) or '등록된 메모가 없습니다.'}"
-                        )
+                        # 마우스를 올렸을 때 긴 미리보기(tooltip)가 뜨지 않도록 help 옵션은 사용하지 않습니다.
+                        # 현장명을 클릭하면 바로 현장정보/점검일정 수정 다이얼로그가 열립니다.
                         btn_key = make_streamlit_key("cal_btn", year, month, week_idx, col_idx, event_no, site, step_idx)
-                        if st.button(label, key=btn_key, use_container_width=True, help=help_text):
+                        if st.button(label, key=btn_key, use_container_width=True):
                             show_schedule_edit_dialog(site, step_idx)
 
 # ==========================================
@@ -1143,6 +1139,7 @@ def main():
                 st.rerun()
 
     st.subheader("🗓️ 프로젝트 전체 일정 캘린더")
+    st.caption("현장명을 클릭하면 현장정보와 점검일정을 바로 수정할 수 있습니다. 마우스 오버 미리보기는 표시하지 않습니다.")
     c1, c2, c3 = st.columns([1, 4, 1])
     with c1:
         if st.button("◀ 이전 달", use_container_width=True):
