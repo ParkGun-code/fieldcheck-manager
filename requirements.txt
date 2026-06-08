@@ -1,3 +1,5 @@
 streamlit>=1.34.0
 google-genai>=1.0.0
 pywin32; platform_system == "Windows"
+pandas
+openpyxl
