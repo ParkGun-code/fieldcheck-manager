@@ -17,7 +17,7 @@ import shutil
 import zipfile
 import io
 import pandas as pd
-import re # 텍스트 추출을 위한 정규표현식 라이브러리 추가
+import re # 텍스트 추출을 위한 정규표현식 라이브러리
 
 # ==========================================
 # 🛑 HWP -> PDF 변환용 라이브러리 (윈도우 전용)
@@ -56,10 +56,10 @@ def hwp_to_pdf(hwp_path):
 # ==========================================
 # ⚙️ 1. 기본 설정 및 전역 변수
 # ==========================================
-st.set_page_config(page_title="건설현장 벌점 통합 관리 웹", layout="wide")
+st.set_page_config(page_title="건설현장 벌점 통합 관리 웹", page_icon="🏛️", layout="wide")
 
 SHARED_USER_ID = "molitdj"
-SHARED_PASSWORD = "eowjscjd1!"
+SHARED_PASSWORD = "password123!" # 필요시 원래 비밀번호로 수정하세요
 
 GEMINI_API_KEY = "AIzaSyBRSKqPy-IVLqAqICwaJmli5YKifNcRdoA"  
 pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
@@ -84,45 +84,7 @@ PENALTY_INTERVALS = [
 ]
 
 # ==========================================
-# 💡 [핵심] 제목 변환 함수 (달력 및 사이드바 공통)
-# ==========================================
-def get_formatted_title(site_name, desc, max_len=14):
-    site_name = str(site_name) if site_name else ""
-    desc = str(desc) if desc else ""
-    
-    team_match = re.search(r'\[(.*?)\]', desc)
-    team_str = f"[{team_match.group(1)}]" if team_match else ""
-    
-    if "우기" in desc: type_str = "[우기]"
-    elif "상시" in desc or "월점검" in desc: type_str = "[상시]"
-    elif "현장점검" in desc: type_str = "[점검]"
-    elif "사전부과" in desc or "의견" in desc or "이의" in desc: type_str = "[행정]"
-    else: type_str = "[일정]"
-    
-    display_title = f"{type_str}{team_str}{site_name}"
-    
-    # 길이가 설정된 길이를 초과하면 말줄임표 처리
-    if len(display_title) > max_len:
-        display_title = display_title[:max_len-1] + "..."
-    return display_title
-
-def format_sidebar_title(site_name, site_data):
-    if site_name == "전체 현장": return site_name
-    steps = site_data.get(site_name, [])
-    if not steps: return site_name
-    
-    target_desc = str(steps[0].get('desc', ''))
-    for step in steps:
-        step_desc = str(step.get('desc', ''))
-        if "우기" in step_desc or "상시" in step_desc or "월점검" in step_desc:
-            target_desc = step_desc
-            break
-            
-    # 사이드바는 스트림릿 중복 이름 에러 방지를 위해 길이를 넉넉히 허용(30자)
-    return get_formatted_title(site_name, target_desc, max_len=30)
-
-# ==========================================
-# 🖱️ 2. 새창(다이얼로그) 마우스 드래그 기능 주입
+# 🖱️ 2. 새창(다이얼로그) 기능
 # ==========================================
 def make_dialog_draggable():
     drag_js = """
@@ -180,22 +142,29 @@ def make_dialog_draggable():
     """
     components.html(drag_js, height=0, width=0)
 
-# ==========================================
-# 🔐 3. 새창(다이얼로그) 팝업 UI 구현
-# ==========================================
-@st.dialog("AI 심의안건 보고서 작성 (새창)", width="large")
+@st.dialog("📋 점검 상세 정보 (새창)")
+def show_event_details(site, desc, memo):
+    make_dialog_draggable()
+    st.markdown(f"### 🏢 {site}")
+    st.info(f"**진행 업무:** {desc}")
+    st.write(f"**상세내용 (엑셀 정보):**\n")
+    st.code(memo, language="text")
+    if st.button("닫기", type="primary"):
+        st.rerun()
+
+@st.dialog("✨ AI 심의안건 보고서 작성 (새창)", width="large")
 def show_summary_dialog(file_path, file_name):
     make_dialog_draggable() 
-    st.markdown(f"### [{file_name}] 분석 결과")
+    st.markdown(f"### 📄 [{file_name}] 분석 결과")
     with st.spinner("AI가 공무원 양식으로 보고서를 작성 중입니다..."):
         st.write_stream(get_ai_summary_stream(file_path))
     if st.button("닫기", type="primary"):
         st.rerun()
 
-@st.dialog("첨부 문서 뷰어 (새창)", width="large")
+@st.dialog("📄 첨부 문서 뷰어 (새창)", width="large")
 def show_file_dialog(file_path, file_name):
     make_dialog_draggable() 
-    st.markdown(f"### {file_name}")
+    st.markdown(f"### 📎 {file_name}")
     ext = os.path.splitext(file_path)[1].lower()
     
     if ext in ['.png', '.jpg', '.jpeg']:
@@ -209,98 +178,89 @@ def show_file_dialog(file_path, file_name):
         with open(file_path, "r", encoding="utf-8") as f:
             st.text_area("문서 내용", f.read(), height=500)
     else:
-        st.warning("웹 미리보기를 지원하지 않는 형식입니다. 리스트의 체크박스를 통해 다운로드해 주세요.")
+        st.warning("⚠️ 웹 미리보기를 지원하지 않는 형식입니다. 리스트의 체크박스를 통해 다운로드해 주세요.")
 
 # ==========================================
-# 📅 4. 중앙 달력 렌더링 함수
+# 💡 [핵심] 달력 및 좌측 리스트용 공통 제목 변환 함수
 # ==========================================
-def render_html_calendar(site_data, year, month, selected_site=None):
+def format_site_title(site_name, steps=None):
+    if site_name == "전체 현장": return site_name
+    if not steps: return site_name
+    
+    target_desc = steps[0]['desc']
+    for step in steps:
+        if "우기" in step['desc'] or "상시" in step['desc'] or "월점검" in step['desc']:
+            target_desc = step['desc']
+            break
+            
+    team_match = re.search(r'\[(.*?)\]', target_desc)
+    team_str = f"[{team_match.group(1)}]" if team_match else ""
+    
+    if "우기" in target_desc: type_str = "[우기]"
+    elif "상시" in target_desc or "월점검" in target_desc: type_str = "[상시]"
+    elif "현장점검" in target_desc: type_str = "[점검]"
+    elif "사전부과" in target_desc or "의견" in target_desc or "이의" in target_desc: type_str = "[행정]"
+    else: type_str = "[일정]"
+    
+    display_title = f"{type_str}{team_str}{site_name}"
+    
+    # 길이가 길어질 경우 말줄임표(...) 처리
+    if len(display_title) > 14:
+        display_title = display_title[:13] + "..."
+        
+    return display_title
+
+# ==========================================
+# 📅 4. 중앙 달력 렌더링 함수 (에러 없는 표준 컴포넌트 버전)
+# ==========================================
+def render_stable_calendar(site_data, year, month, selected_site=None):
     cal = calendar.monthcalendar(year, month)
-    html = "<style>"
-    html += ".cal-cell-scroll::-webkit-scrollbar { width: 6px; }"
-    html += ".cal-cell-scroll::-webkit-scrollbar-thumb { background: #c1c1c1; border-radius: 3px; }"
-    html += ".cal-cell-scroll::-webkit-scrollbar-track { background: #f1f1f1; }"
-    html += "</style>"
-    html += """
-    <div id="customModal" style="display:none; position:fixed; z-index:9999; left:50%; top:50%; transform:translate(-50%, -50%); background:#ffffff; padding:20px; border:1px solid #ccc; border-radius:12px; box-shadow:0 8px 16px rgba(0,0,0,0.3); width:450px;">
-        <h3 id="modalSiteName" style="margin-top:0; color:#1f2937; border-bottom:2px solid #e5e7eb; padding-bottom:10px;">현장명</h3>
-        <p id="modalDesc" style="font-weight:bold; color:#2563eb; margin-bottom:5px;"></p>
-        <pre id="modalMemo" style="white-space:pre-wrap; font-family:'Malgun Gothic', sans-serif; font-size:14px; color:#4b5563; background:#f3f4f6; padding:15px; border-radius:8px; line-height:1.5;"></pre>
-        <button onclick="document.getElementById('customModal').style.display='none'" style="float:right; padding:8px 16px; cursor:pointer; background:#3b82f6; color:white; border:none; border-radius:6px; font-weight:bold;">닫기</button>
-    </div>
-    <script>
-    function openSiteInfo(site, desc, memo) {
-        document.getElementById('modalSiteName').innerText = site;
-        document.getElementById('modalDesc').innerText = desc;
-        document.getElementById('modalMemo').innerText = memo;
-        document.getElementById('customModal').style.display = 'block';
-    }
-    </script>
-    """
-    html += "<table style='width:100%; table-layout:fixed; border-collapse: collapse; text-align:left; background-color:#ffffff; box-shadow: 0 4px 8px rgba(0,0,0,0.1);'>"
-    html += "<tr>"
-    for d in ['월', '화', '수', '목', '금', '토', '일']:
-        html += f"<th style='border:1px solid #ddd; padding:10px; text-align:center; background-color:#f0f2f6; font-size:16px;'>{d}</th>"
-    html += "</tr>"
+    
+    # 요일 헤더
+    cols = st.columns(7)
+    for i, d in enumerate(['월', '화', '수', '목', '금', '토', '일']): 
+        cols[i].markdown(f"<div style='text-align:center; font-weight:bold; padding:5px; background-color:#f0f2f6; border-radius:5px;'>{d}</div>", unsafe_allow_html=True)
+    
+    st.markdown("<br>", unsafe_allow_html=True)
+    
+    # 날짜 및 이벤트 출력
     for week in cal:
-        html += "<tr>"
-        for day in week:
-            if day == 0:
-                html += "<td style='border:1px solid #ddd; background-color:#fafafa;'></td>"
-            else:
+        week_cols = st.columns(7)
+        for i, day in enumerate(week):
+            if day == 0: 
+                continue
+            with week_cols[i]:
+                # 날짜 표시 (오늘 날짜면 파란색 강조)
                 current_date = date(year, month, day)
-                bg_color = "#e6f2ff" if current_date == date.today() else "#ffffff"
-                day_events = []
+                is_today = current_date == date.today()
+                day_style = "color:#2563eb; font-weight:bold; font-size:18px;" if is_today else "font-weight:bold; font-size:16px;"
+                st.markdown(f"<div style='{day_style}'>{day}</div>", unsafe_allow_html=True)
+                
+                # 이벤트 출력부
                 for site, steps in site_data.items():
                     if selected_site and selected_site != "전체 현장" and site != selected_site: 
                         continue
+                    
                     for step in steps:
                         if step['date'] == current_date:
-                            if "우기" in step['desc']:
-                                event_bg, event_border = "#dbeafe", "#1d4ed8"  
-                            elif "상시" in step['desc'] or "월점검" in step['desc']:
-                                event_bg, event_border = "#d1fae5", "#047857"  
-                            elif "현장점검" in step['desc']:
-                                event_bg, event_border = "#f3f4f6", "#374151"  
-                            else:
-                                event_bg, event_border = "#fef3c7", "#b45309"  
-                                
-                            # 특수문자 에러 완벽 방어 (\r 제거 및 인용부호 이스케이프 처리)
-                            safe_site = str(site).replace("'", "\\'").replace('"', '&quot;')
-                            safe_desc = str(step['desc']).replace("'", "\\'").replace('"', '&quot;')
-                            safe_memo = str(step.get('memo', '')).replace('\n', '\\n').replace('\r', '').replace("'", "\\'").replace('"', '&quot;')
+                            desc = step['desc']
                             
-                            # 달력에는 글씨를 14자 길이로 줄여서 출력
-                            display_title = get_formatted_title(site, step['desc'], max_len=14)
-                            clean_title = f"{site} - {step['desc']}".replace('"', '&quot;').replace("'", "&#39;")
+                            # 달력 버튼에 표시될 줄여진 글씨 조합 (format_site_title 함수 활용)
+                            display_title = format_site_title(site, [step])
                             
-                            div_html = f"<div onclick=\"openSiteInfo('{safe_site}', '{safe_desc}', '{safe_memo}')\" style='cursor:pointer; font-size:12px; margin-top:4px; padding:4px; background-color:{event_bg}; border-left:3px solid {event_border}; border-radius:3px; transition: 0.2s;' title=\"{clean_title}\">{display_title}</div>"
-                            day_events.append(div_html)
-                MAX_DISPLAY = 20
-                events_html = ""
-                for i, e in enumerate(day_events):
-                    if i < MAX_DISPLAY:
-                        events_html += e
-                    elif i == MAX_DISPLAY:
-                        events_html += f"<div style='font-size:12px; margin-top:4px; padding:4px; text-align:center; background-color:#e0e0e0; color:#555; border-radius:3px;'>...외 {len(day_events) - MAX_DISPLAY}건 더 있음</div>"
-                        break
-                html += f"<td style='border:1px solid #ddd; padding:0; vertical-align:top; background-color:{bg_color};'>"
-                html += "<div style='display:flex; flex-direction:column; height:130px; padding:6px;'>"
-                html += f"<strong style='font-size:16px; margin-bottom:2px; flex-shrink:0;'>{day}</strong>"
-                html += "<div class='cal-cell-scroll' style='flex-grow:1; overflow-y:auto; padding-right:4px;'>"
-                html += events_html
-                html += "</div></div></td>"
-        html += "</tr>"
-    html += "</table><br>"
-    return html
+                            # 버튼 클릭 시 팝업 띄우기 (hover 툴팁으로 전체 이름 제공)
+                            if st.button(display_title, key=f"cal_{site}_{day}_{desc}", help=f"{site} - {desc}", use_container_width=True):
+                                show_event_details(site, desc, step.get('memo', ''))
+        st.markdown("---")
 
 # ==========================================
 # 🤖 5. 공무원 양식 AI 요약 프롬프트 적용
 # ==========================================
 def get_ai_summary_stream(file_path):
-    yield "AI 분석 엔진을 초기화하는 중입니다...\n\n"
+    yield "🔄 AI 분석 엔진을 초기화하는 중입니다...\n\n"
     client = genai.Client(api_key=GEMINI_API_KEY)
     ext = os.path.splitext(file_path)[1].lower()
+    
     prompt = """당신은 관공서(국토관리청 등)의 벌점심의위원회 또는 현장점검 결과 보고서를 작성하는 전문 행정관입니다.
     제공된 문서를 철저히 분석하여, 아래의 [공식 심의안건 보고서 양식]에 맞추어 완벽하게 요약 및 재작성하십시오.
 
@@ -326,49 +286,48 @@ def get_ai_summary_stream(file_path):
     - 반드시 명조체 느낌의 정중하고 딱딱한 공문서 개조식 어투(~함, ~임)를 사용하십시오.
     - 문서에 없는 내용을 절대 임의로 지어내지 마십시오. 정보가 부족한 항목은 과감히 생략하십시오.
     """
+    
     uploaded_file = None
     safe_filepath = None
     try:
         if ext in ['.pdf', '.png', '.jpg', '.jpeg', '.txt']:
-            yield "문서를 안전하게 변환하여 구글 서버로 전송합니다...\n\n"
+            yield "🚀 문서를 안전하게 변환하여 구글 서버로 전송합니다...\n\n"
             safe_filename = f"temp_ai_upload_{int(time.time())}{ext}"
             safe_filepath = os.path.join(ATTACH_DIR, safe_filename)
             shutil.copy2(file_path, safe_filepath)
             uploaded_file = client.files.upload(file=safe_filepath)
+            
             if ext == '.pdf':
-                yield "PDF 문서를 스캔하고 있습니다. (약 5~10초 소요)...\n\n"
+                yield "📄 PDF 문서를 스캔하고 있습니다. (약 5~10초 소요)...\n\n"
                 while True:
                     file_info = client.files.get(name=uploaded_file.name)
                     state_str = str(file_info.state).upper()
                     if "ACTIVE" in state_str:    
                         break
                     elif "FAILED" in state_str:  
-                        yield "구글 서버에서 PDF 문서를 읽는 데 실패했습니다."
+                        yield "❌ 구글 서버에서 PDF 문서를 읽는 데 실패했습니다."
                         return
                     time.sleep(2)  
-            yield "스캔 완료! 보고서 작성을 시작합니다...\n\n---\n\n"
+                    
+            yield "💡 스캔 완료! 보고서 작성을 시작합니다...\n\n---\n\n"
             response_stream = client.models.generate_content_stream(model='gemini-2.5-flash', contents=[prompt, uploaded_file])
             for chunk in response_stream:
                 if chunk.text: yield chunk.text
         else:
-            yield "스트림릿 환경에서는 PDF, TXT, 이미지 요약만 안정적으로 지원합니다."
+            yield "⚠️ 스트림릿 환경에서는 PDF, TXT, 이미지 요약만 안정적으로 지원합니다."
     except Exception as e:
         error_msg = str(e)
         if "503" in error_msg or "high demand" in error_msg.lower():
-            yield "\n\n현재 구글 AI 서버에 사용자가 몰려 일시적으로 혼잡한 상태입니다.\n(약 1~2분 뒤에 다시 요약 버튼을 눌러주세요.)"
+            yield "\n\n❌ 현재 구글 AI 서버에 사용자가 몰려 일시적으로 혼잡한 상태입니다.\n(약 1~2분 뒤에 다시 요약 버튼을 눌러주세요.)"
         else:
-            yield f"\n\nAI 분석 중 오류가 발생했습니다.\n상세: {error_msg}"
+            yield f"\n\n❌ AI 분석 중 오류가 발생했습니다.\n상세: {error_msg}"
     finally:
         if uploaded_file:
-            try:
-                client.files.delete(name=uploaded_file.name)
-            except:
-                pass
+            try: client.files.delete(name=uploaded_file.name)
+            except: pass
         if safe_filepath and os.path.exists(safe_filepath):
-            try:
-                os.remove(safe_filepath)
-            except:
-                pass
+            try: os.remove(safe_filepath)
+            except: pass
 
 # ==========================================
 # 💾 6. 데이터 처리 (엑셀/CSV 파싱 포함)
@@ -376,7 +335,7 @@ def get_ai_summary_stream(file_path):
 def check_password():
     if "logged_in" not in st.session_state: st.session_state["logged_in"] = False
     if st.session_state["logged_in"]: return True
-    st.markdown("## 건설현장 벌점 통합 관리 시스템 Login")
+    st.markdown("## 🏛️ 건설현장 벌점 통합 관리 시스템 Login")
     with st.form("login_form"):
         user_id = st.text_input("아이디")
         password = st.text_input("비밀번호", type="password")
@@ -433,14 +392,11 @@ def save_data(site_data):
     except Exception as e:
         st.error(f"저장 실패: {e}")
 
-# 엑셀/CSV 일괄 등록 로직
 def process_excel_schedule(file):
     try:
         if file.name.lower().endswith('.csv'):
-            try:
-                df = pd.read_csv(file, encoding='utf-8-sig', header=None)
-            except:
-                df = pd.read_csv(file, encoding='cp949', header=None)
+            try: df = pd.read_csv(file, encoding='utf-8-sig', header=None)
+            except: df = pd.read_csv(file, encoding='cp949', header=None)
         else:
             df = pd.read_excel(file, header=None)
         
@@ -476,21 +432,19 @@ def process_excel_schedule(file):
                 parts = [p for p in date_raw.split('.') if p.strip().isdigit()]
                 if len(parts) >= 2:
                     plan_date = date(2026, int(parts[0]), int(parts[1]))
-                else:
-                    continue 
-            except:
-                continue 
+                else: continue 
+            except: continue 
             
             inspection_type = "상시점검" if "상시" in file.name else "우기대비 점검"
             team_str = f"[{team}]" if team and team != 'nan' else ""
             desc = f"{team_str} {inspection_type}".strip()
             
             memo_lines = []
-            if client and client != 'nan': memo_lines.append(f"발주처: {client}")
-            if builder and builder != 'nan': memo_lines.append(f"시공사: {builder}")
-            if supervisor and supervisor != 'nan': memo_lines.append(f"감리사: {supervisor}")
-            if manager and manager != 'nan': memo_lines.append(f"현장대리인: {manager} ({phone})")
-            if status and status != 'nan': memo_lines.append(f"공사진행상태: {status}")
+            if client and client != 'nan': memo_lines.append(f"🏢 발주처: {client}")
+            if builder and builder != 'nan': memo_lines.append(f"👷 시공사: {builder}")
+            if supervisor and supervisor != 'nan': memo_lines.append(f"🔍 감리사: {supervisor}")
+            if manager and manager != 'nan': memo_lines.append(f"👤 현장대리인: {manager} ({phone})")
+            if status and status != 'nan': memo_lines.append(f"📌 공사진행상태: {status}")
             
             memo = "\n".join(memo_lines)
             
@@ -500,21 +454,18 @@ def process_excel_schedule(file):
             existing_descs = [s['desc'] for s in st.session_state.site_data[site_name] if s['date'] == plan_date]
             if desc not in existing_descs:
                 st.session_state.site_data[site_name].append({
-                    "date": plan_date,
-                    "desc": desc,
-                    "memo": memo,
-                    "files": []
+                    "date": plan_date, "desc": desc, "memo": memo, "files": []
                 })
                 st.session_state.site_data[site_name].sort(key=lambda x: x['date'])
                 success_count += 1
                 
         if success_count > 0:
             save_data(st.session_state.site_data)
-            st.success(f"총 {success_count}건의 점검 일정이 엑셀에서 성공적으로 등록되었습니다!")
+            st.success(f"총 {success_count}건의 점검 일정이 성공적으로 등록되었습니다!")
             time.sleep(1) 
             st.rerun()
         else:
-            st.warning("등록할 유효한 일정이 없습니다. (날짜가 '06.17.' 형식인지 확인하세요)")
+            st.warning("등록할 유효한 일정이 없습니다.")
             
     except Exception as e:
         st.error(f"엑셀 처리 중 오류 발생: {e}")
@@ -539,20 +490,18 @@ def main():
     if "cal_year" not in st.session_state: st.session_state.cal_year = date.today().year
     if "cal_month" not in st.session_state: st.session_state.cal_month = date.today().month
 
-    st.title("건설현장 벌점 및 문서 통합 관리 시스템")
+    st.title("🏗️ 건설현장 벌점 및 문서 통합 관리 시스템")
 
     with st.sidebar:
-        st.header("엑셀 일정 일괄 등록")
+        st.header("📁 엑셀 일정 일괄 등록")
         excel_file = st.file_uploader("엑셀/CSV 파일 업로드", type=['csv', 'xlsx', 'xls'])
-        if st.button("일정 자동 등록하기", type="primary", use_container_width=True):
-            if excel_file:
-                process_excel_schedule(excel_file)
-            else:
-                st.warning("먼저 엑셀 또는 CSV 파일을 올려주세요.")
+        if st.button("🚀 일정 자동 등록하기", type="primary", use_container_width=True):
+            if excel_file: process_excel_schedule(excel_file)
+            else: st.warning("먼저 엑셀 또는 CSV 파일을 올려주세요.")
         
         st.divider()
 
-        st.header("개별 프로젝트 등록")
+        st.header("➕ 개별 프로젝트 등록")
         with st.form("add_project_form"):
             new_site_name = st.text_input("프로젝트(현장)명")
             start_date = st.date_input("점검 예정일", value=date.today())
@@ -565,8 +514,8 @@ def main():
                     st.rerun()
 
         st.divider()
-        st.header("프로젝트 선택")
-        search_query = st.text_input("현장명 검색", placeholder="현장 이름을 입력하세요")
+        st.header("📋 프로젝트 선택")
+        search_query = st.text_input("🔍 현장명 검색", placeholder="현장 이름을 입력하세요")
         all_sites = sorted(list(st.session_state.site_data.keys()))
         if search_query:
             filtered_sites = [site for site in all_sites if search_query.lower() in site.lower()]
@@ -575,24 +524,25 @@ def main():
             site_options = ["전체 현장"] + all_sites
             
         with st.container(height=300, border=True):
+            # 💡 [핵심] 사이드바 현장 리스트의 글자도 통일된 방식으로 표시합니다.
             selected_site = st.radio(
                 "일정을 볼 현장 선택", 
                 site_options, 
                 label_visibility="collapsed",
-                format_func=lambda x: format_sidebar_title(x, st.session_state.site_data)
+                format_func=lambda x: format_site_title(x, st.session_state.site_data.get(x, []))
             )
         
         st.markdown("<br>", unsafe_allow_html=True)
         if selected_site != "전체 현장":
-            if st.button("현재 프로젝트 삭제", type="primary", use_container_width=True):
+            if st.button("🗑️ 현재 프로젝트 삭제", type="primary", use_container_width=True):
                 del st.session_state.site_data[selected_site]
                 save_data(st.session_state.site_data)
                 st.rerun()
 
-    st.subheader("프로젝트 전체 일정 캘린더")
+    st.subheader("🗓️ 프로젝트 전체 일정 캘린더")
     c1, c2, c3 = st.columns([1, 4, 1])
     with c1:
-        if st.button("이전 달", use_container_width=True):
+        if st.button("◀ 이전 달", use_container_width=True):
             if st.session_state.cal_month == 1:
                 st.session_state.cal_month = 12
                 st.session_state.cal_year -= 1
@@ -601,24 +551,24 @@ def main():
     with c2:
         st.markdown(f"<h3 style='text-align:center;'>{st.session_state.cal_year}년 {st.session_state.cal_month}월</h3>", unsafe_allow_html=True)
     with c3:
-        if st.button("다음 달", use_container_width=True):
+        if st.button("다음 달 ▶", use_container_width=True):
             if st.session_state.cal_month == 12:
                 st.session_state.cal_month = 1
                 st.session_state.cal_year += 1
             else: st.session_state.cal_month += 1
             st.rerun()
 
-    st.markdown(render_html_calendar(st.session_state.site_data, st.session_state.cal_year, st.session_state.cal_month, selected_site), unsafe_allow_html=True)
+    # 여기서 위에서 정의한 안정적인 달력 함수(render_stable_calendar)를 호출합니다!
+    render_stable_calendar(st.session_state.site_data, st.session_state.cal_year, st.session_state.cal_month, selected_site)
     st.divider()
 
     if selected_site != "전체 현장":
-        st.subheader(f"[{selected_site}] 세부 일정 및 파일 관리")
+        st.subheader(f"📂 [{selected_site}] 세부 일정 및 파일 관리")
         steps = st.session_state.site_data[selected_site]
 
         add_col1, add_col2 = st.columns(2)
-        
         with add_col1:
-            with st.expander("단순 일정 수동 추가"):
+            with st.expander("📌 단순 일정 수동 추가"):
                 e1, e2 = st.columns([1, 2])
                 with e1: custom_date = st.date_input("날짜", key="c_date")
                 with e2: custom_desc = st.text_input("업무 내용", key="c_desc")
@@ -629,12 +579,12 @@ def main():
                     st.rerun()
 
         with add_col2:
-            with st.expander("벌점/과태료 발생 시 (후속 행정절차 자동 생성)"):
+            with st.expander("🚨 벌점/과태료 발생 시 (후속 행정절차 자동 생성)"):
                 st.markdown("<span style='font-size:14px;'>현장점검 결과 벌점 등이 부과된 경우, 점검일을 기준으로 이후의 모든 법정 행정절차 일정을 자동으로 덧붙입니다.</span>", unsafe_allow_html=True)
                 base_step = next((s for s in steps if "현장점검" in s['desc']), None)
                 default_base_date = base_step['date'] if base_step else date.today()
                 penalty_base_date = st.date_input("기준일 (현장점검일)", value=default_base_date)
-                if st.button("후속 행정절차 일괄 생성", type="primary", use_container_width=True):
+                if st.button("⚠️ 후속 행정절차 일괄 생성", type="primary", use_container_width=True):
                     existing_descs = [s['desc'] for s in steps]
                     if "확인서 이의제기 접수" in existing_descs:
                         st.warning("이미 벌점 부과 후속 일정이 생성되어 있습니다.")
@@ -661,13 +611,13 @@ def main():
 
         p_col1, p_col2, p_col3 = st.columns([1, 3, 1])
         with p_col1:
-            if st.button("이전 페이지", disabled=(st.session_state.current_page == 1), use_container_width=True):
+            if st.button("◀ 이전 페이지", disabled=(st.session_state.current_page == 1), use_container_width=True):
                 st.session_state.current_page -= 1
                 st.rerun()
         with p_col2:
             st.markdown(f"<div style='text-align:center; font-size:16px; padding-top:5px;'><b>페이지 {st.session_state.current_page} / {total_pages}</b> (총 {total_items}건)</div>", unsafe_allow_html=True)
         with p_col3:
-            if st.button("다음 페이지", disabled=(st.session_state.current_page == total_pages), use_container_width=True):
+            if st.button("다음 페이지 ▶", disabled=(st.session_state.current_page == total_pages), use_container_width=True):
                 st.session_state.current_page += 1
                 st.rerun()
 
@@ -684,17 +634,17 @@ def main():
                         steps.sort(key=lambda x: x['date'])
                         save_data(st.session_state.site_data)
                         st.rerun()
-                    if st.button("삭제", key=f"del_step_{actual_idx}"):
+                    if st.button("❌ 삭제", key=f"del_step_{actual_idx}"):
                         steps.pop(actual_idx)
                         save_data(st.session_state.site_data)
                         st.rerun()
                 with c2:
-                    new_memo = st.text_area("메모", value=step.get('memo', ''), height=100, key=f"memo_{actual_idx}")
+                    new_memo = st.text_area("📝 메모", value=step.get('memo', ''), height=100, key=f"memo_{actual_idx}")
                     if new_memo != step.get('memo', ''):
                         steps[actual_idx]['memo'] = new_memo
                         save_data(st.session_state.site_data)
                 with c3:
-                    st.markdown("**첨부 파일 관리 (드래그 앤 드롭)**")
+                    st.markdown("**📂 첨부 파일 관리 (드래그 앤 드롭)**")
                     uploaded_files = st.file_uploader("파일 업로드", accept_multiple_files=True, key=f"up_{actual_idx}", label_visibility="collapsed")
                     if uploaded_files:
                         has_new = False
@@ -705,7 +655,7 @@ def main():
                                 steps[actual_idx].setdefault('files', []).append(original_path)
                                 has_new = True
                                 if original_path.lower().endswith(".hwp"):
-                                    with st.spinner("한글(HWP) 문서를 PDF로 자동 변환 중입니다... (최대 10초 소요)"):
+                                    with st.spinner("🔄 한글(HWP) 문서를 PDF로 자동 변환 중입니다... (최대 10초 소요)"):
                                         pdf_path = hwp_to_pdf(original_path)
                                         if pdf_path != original_path and os.path.exists(pdf_path):
                                             if pdf_path not in steps[actual_idx]['files']:
@@ -713,6 +663,7 @@ def main():
                         if has_new:
                             save_data(st.session_state.site_data)
                             st.rerun()
+                            
                     existing_files = []
                     needs_sync = False
                     for file_path in steps[actual_idx].get('files', []):
@@ -721,33 +672,33 @@ def main():
                     if needs_sync:
                         steps[actual_idx]['files'] = existing_files
                         save_data(st.session_state.site_data)
+                        
                     checked_files_to_download = []
                     for file_path in steps[actual_idx].get('files', []):
                         file_name = os.path.basename(file_path)
                         ext = file_name.lower().split('.')[-1]
                         chk_col, btn_col1, btn_col2, btn_col3 = st.columns([5, 2, 2, 2])
                         with chk_col:
-                            is_checked = st.checkbox(f"{file_name}", key=f"chk_{actual_idx}_{file_path}")
+                            is_checked = st.checkbox(f"📎 {file_name}", key=f"chk_{actual_idx}_{file_path}")
                             if is_checked: checked_files_to_download.append(file_path)
                         if ext in ['pdf', 'png', 'jpg', 'jpeg', 'txt']:
                             with btn_col1:
-                                if st.button("열기", key=f"view_{actual_idx}_{file_path}", help="새창에서 문서 보기", use_container_width=True):
+                                if st.button("👁️ 열기", key=f"view_{actual_idx}_{file_path}", help="새창에서 문서 보기", use_container_width=True):
                                     show_file_dialog(file_path, file_name)
                             with btn_col2:
-                                if st.button("요약", key=f"ai_{actual_idx}_{file_path}", help="새창에서 공문서 양식으로 요약", use_container_width=True):
+                                if st.button("✨ 요약", key=f"ai_{actual_idx}_{file_path}", help="새창에서 공문서 양식으로 요약", use_container_width=True):
                                     show_summary_dialog(file_path, file_name)
                         else:
                             with btn_col1: st.write("")
                             with btn_col2: st.write("")
                         with btn_col3:
-                            if st.button("삭제", key=f"delf_{actual_idx}_{file_path}", use_container_width=True):
+                            if st.button("🗑️ 삭제", key=f"delf_{actual_idx}_{file_path}", use_container_width=True):
                                 steps[actual_idx]['files'].remove(file_path)
-                                try:
-                                    os.remove(file_path) 
-                                except:
-                                    pass
+                                try: os.remove(file_path) 
+                                except: pass
                                 save_data(st.session_state.site_data)
                                 st.rerun()
+                                
                     if checked_files_to_download:
                         st.markdown("<br>", unsafe_allow_html=True)
                         zip_buffer = io.BytesIO()
@@ -755,7 +706,7 @@ def main():
                             for fpath in checked_files_to_download:
                                 zip_file.write(fpath, arcname=os.path.basename(fpath))
                         st.download_button(
-                            label=f"체크된 파일 {len(checked_files_to_download)}개 다운로드 (.zip)",
+                            label=f"💾 체크된 파일 {len(checked_files_to_download)}개 다운로드 (.zip)",
                             data=zip_buffer.getvalue(),
                             file_name=f"첨부파일_다운로드_{date.today().strftime('%Y%m%d')}.zip",
                             mime="application/zip",
