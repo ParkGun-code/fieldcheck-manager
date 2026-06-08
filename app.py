@@ -86,7 +86,10 @@ PENALTY_INTERVALS = [
 # ==========================================
 # 💡 [핵심] 제목 변환 함수 (달력 및 사이드바 공통)
 # ==========================================
-def get_formatted_title(site_name, desc):
+def get_formatted_title(site_name, desc, max_len=14):
+    site_name = str(site_name) if site_name else ""
+    desc = str(desc) if desc else ""
+    
     team_match = re.search(r'\[(.*?)\]', desc)
     team_str = f"[{team_match.group(1)}]" if team_match else ""
     
@@ -97,9 +100,10 @@ def get_formatted_title(site_name, desc):
     else: type_str = "[일정]"
     
     display_title = f"{type_str}{team_str}{site_name}"
-    # 길이가 13글자를 초과하면 말줄임표 처리
-    if len(display_title) > 13:
-        display_title = display_title[:12] + "..."
+    
+    # 길이가 설정된 길이를 초과하면 말줄임표 처리
+    if len(display_title) > max_len:
+        display_title = display_title[:max_len-1] + "..."
     return display_title
 
 def format_sidebar_title(site_name, site_data):
@@ -107,13 +111,15 @@ def format_sidebar_title(site_name, site_data):
     steps = site_data.get(site_name, [])
     if not steps: return site_name
     
-    target_desc = steps[0]['desc']
+    target_desc = str(steps[0].get('desc', ''))
     for step in steps:
-        if "우기" in step['desc'] or "상시" in step['desc'] or "월점검" in step['desc']:
-            target_desc = step['desc']
+        step_desc = str(step.get('desc', ''))
+        if "우기" in step_desc or "상시" in step_desc or "월점검" in step_desc:
+            target_desc = step_desc
             break
             
-    return get_formatted_title(site_name, target_desc)
+    # 사이드바는 스트림릿 중복 이름 에러 방지를 위해 길이를 넉넉히 허용(30자)
+    return get_formatted_title(site_name, target_desc, max_len=30)
 
 # ==========================================
 # 🖱️ 2. 새창(다이얼로그) 마우스 드래그 기능 주입
@@ -259,13 +265,16 @@ def render_html_calendar(site_data, year, month, selected_site=None):
                             else:
                                 event_bg, event_border = "#fef3c7", "#b45309"  
                                 
-                            safe_site = site.replace("'", "\\'").replace('"', '&quot;')
-                            safe_desc = step['desc'].replace("'", "\\'").replace('"', '&quot;')
-                            safe_memo = step.get('memo', '').replace('\n', '\\n').replace("'", "\\'").replace('"', '&quot;')
+                            # 특수문자 에러 완벽 방어 (\r 제거 및 인용부호 이스케이프 처리)
+                            safe_site = str(site).replace("'", "\\'").replace('"', '&quot;')
+                            safe_desc = str(step['desc']).replace("'", "\\'").replace('"', '&quot;')
+                            safe_memo = str(step.get('memo', '')).replace('\n', '\\n').replace('\r', '').replace("'", "\\'").replace('"', '&quot;')
                             
-                            display_title = get_formatted_title(site, step['desc'])
+                            # 달력에는 글씨를 14자 길이로 줄여서 출력
+                            display_title = get_formatted_title(site, step['desc'], max_len=14)
+                            clean_title = f"{site} - {step['desc']}".replace('"', '&quot;').replace("'", "&#39;")
                             
-                            div_html = f"<div onclick=\"openSiteInfo('{safe_site}', '{safe_desc}', '{safe_memo}')\" style='cursor:pointer; font-size:12px; margin-top:4px; padding:4px; background-color:{event_bg}; border-left:3px solid {event_border}; border-radius:3px; transition: 0.2s;' title='{safe_site} - {safe_desc}'>{display_title}</div>"
+                            div_html = f"<div onclick=\"openSiteInfo('{safe_site}', '{safe_desc}', '{safe_memo}')\" style='cursor:pointer; font-size:12px; margin-top:4px; padding:4px; background-color:{event_bg}; border-left:3px solid {event_border}; border-radius:3px; transition: 0.2s;' title=\"{clean_title}\">{display_title}</div>"
                             day_events.append(div_html)
                 MAX_DISPLAY = 20
                 events_html = ""
