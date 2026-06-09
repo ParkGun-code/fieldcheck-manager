@@ -189,10 +189,18 @@ def show_file_dialog(file_path, file_name):
 SITE_DETAIL_FIELDS = [
     ("site_office", "현장사무실", ["현장사무실", "현장 사무실", "현장사무소", "현장 사무소", "현장사무실 주소", "사무실주소"]),
     ("postal_address", "별도 우편 주소", ["별도 우편 주소", "별도우편주소", "우편주소", "우편 주소", "별도주소", "주소"]),
+    ("construction_period", "착공일~준공일", ["착공일~준공일", "착공일 ~ 준공일", "착공일-준공일", "착공일 - 준공일", "착공/준공", "착공 및 준공", "공사기간", "공사 기간", "공사기간(착공~준공)", "공사기간(착공일~준공일)"]),
     ("construction_start", "착공일", ["착공일", "착공 일자", "공사시작일", "공사 시작일", "착수일"]),
     ("construction_end", "준공일", ["준공일", "준공 일자", "공사종료일", "공사 종료일", "완료일"]),
     ("total_cost", "총공사비", ["총공사비", "총 공사비", "공사비", "도급액", "계약금액", "총사업비"]),
-    ("progress_rate", "공정률", ["공정률", "공정율", "진도율", "공사진행률"]),
+    ("progress_rate", "공정률", ["공정률", "공정율", "진도율", "공사진행률", "공사진행율"]),
+    ("builder", "시공사", ["시공사", "시공 회사", "시공회사", "시공회사명", "시공자", "시공자명", "건설사", "시공업체"]),
+    ("supervisor", "감리사", ["감리사", "감리 회사", "감리회사", "감리회사명", "감리자", "감리자명", "감리업체"]),
+    ("site_manager", "현장대리인", ["현장대리인", "현장 대리인", "현장대리인 성명", "현장대리인명", "대리인", "성명"]),
+    ("manager_phone", "현장대리인 전화번호", ["현장대리인 전화번호", "현장대리인 연락처", "현장대리인 휴대폰", "현장대리인 핸드폰", "대리인 전화번호", "대리인 연락처", "전화번호", "연락처", "휴대폰", "핸드폰"]),
+    ("manager_email", "현장대리인 이메일", ["현장대리인 이메일", "현장대리인 메일", "현장대리인 E-mail", "현장대리인 email", "대리인 이메일", "이메일", "메일", "E-mail", "Email", "email"]),
+    ("client", "발주처", ["발주처\n(인·허가 기관)", "발주처(인·허가 기관)", "발주처", "인허가기관", "인·허가 기관", "인허가 기관"]),
+    ("status", "공사진행상태", ["공사진행상태", "공사 진행 상태", "진행상태", "공사상태", "현장상태"]),
 ]
 
 STEP_EXTRA_FIELDS = [
@@ -519,14 +527,20 @@ def apply_site_details_to_all_steps(site_name, detail_values):
             step[key] = value
 
 
-def format_site_detail_for_popup(step):
+def get_construction_period_text(step):
+    """착공일~준공일 통합 컬럼이 있으면 우선 사용하고, 없으면 착공일/준공일을 합쳐 표시합니다."""
+    explicit_period = clean_cell(step.get("construction_period", ""))
+    if explicit_period:
+        return explicit_period
+
     period_start = clean_cell(step.get("construction_start", ""))
     period_end = clean_cell(step.get("construction_end", ""))
     if period_start or period_end:
-        construction_period = f"{period_start or '-'} ~ {period_end or '-'}"
-    else:
-        construction_period = ""
+        return f"{period_start or '-'} ~ {period_end or '-'}"
+    return ""
 
+
+def format_site_detail_for_popup(step):
     lines = [
         f"점검일정: {step.get('date').strftime('%Y-%m-%d') if step.get('date') else '-'}",
     ]
@@ -544,9 +558,16 @@ def format_site_detail_for_popup(step):
     detail_pairs = [
         ("현장사무실", step.get("site_office", "")),
         ("별도 우편 주소", step.get("postal_address", "")),
-        ("착공일~준공일", construction_period),
+        ("착공일~준공일", get_construction_period_text(step)),
         ("총공사비", step.get("total_cost", "")),
         ("공정률", step.get("progress_rate", "")),
+        ("시공사", step.get("builder", "")),
+        ("감리사", step.get("supervisor", "")),
+        ("현장대리인", step.get("site_manager", "")),
+        ("현장대리인 전화번호", step.get("manager_phone", "")),
+        ("현장대리인 이메일", step.get("manager_email", "")),
+        ("발주처", step.get("client", "")),
+        ("공사진행상태", step.get("status", "")),
     ]
 
     has_detail = False
@@ -560,6 +581,29 @@ def format_site_detail_for_popup(step):
         lines.append("등록된 현장 상세정보가 없습니다.")
 
     return "\n".join(lines)
+
+
+def render_site_detail_inputs(defaults, key_prefix):
+    """현장 상세정보 입력 폼을 한 곳에서 관리해 엑셀/수동등록/수정 화면 컬럼을 동일하게 유지합니다."""
+    detail_values = {}
+    d1, d2 = st.columns(2)
+    with d1:
+        detail_values["site_office"] = st.text_input("현장사무실", value=defaults.get("site_office", ""), key=f"{key_prefix}_site_office")
+        detail_values["construction_period"] = st.text_input("착공일~준공일", value=defaults.get("construction_period", ""), placeholder="예: 2026-03-01 ~ 2027-12-31", key=f"{key_prefix}_construction_period")
+        detail_values["construction_start"] = st.text_input("착공일", value=defaults.get("construction_start", ""), placeholder="예: 2026-03-01", key=f"{key_prefix}_construction_start")
+        detail_values["total_cost"] = st.text_input("총공사비", value=defaults.get("total_cost", ""), placeholder="예: 120억 원", key=f"{key_prefix}_total_cost")
+        detail_values["builder"] = st.text_input("시공사", value=defaults.get("builder", ""), key=f"{key_prefix}_builder")
+        detail_values["site_manager"] = st.text_input("현장대리인", value=defaults.get("site_manager", ""), key=f"{key_prefix}_site_manager")
+        detail_values["manager_phone"] = st.text_input("현장대리인 전화번호", value=defaults.get("manager_phone", ""), key=f"{key_prefix}_manager_phone")
+    with d2:
+        detail_values["postal_address"] = st.text_input("별도 우편 주소", value=defaults.get("postal_address", ""), key=f"{key_prefix}_postal_address")
+        detail_values["construction_end"] = st.text_input("준공일", value=defaults.get("construction_end", ""), placeholder="예: 2027-12-31", key=f"{key_prefix}_construction_end")
+        detail_values["progress_rate"] = st.text_input("공정률", value=defaults.get("progress_rate", ""), placeholder="예: 42%", key=f"{key_prefix}_progress_rate")
+        detail_values["supervisor"] = st.text_input("감리사", value=defaults.get("supervisor", ""), key=f"{key_prefix}_supervisor")
+        detail_values["manager_email"] = st.text_input("현장대리인 이메일", value=defaults.get("manager_email", ""), key=f"{key_prefix}_manager_email")
+        detail_values["client"] = st.text_input("발주처", value=defaults.get("client", ""), key=f"{key_prefix}_client")
+        detail_values["status"] = st.text_input("공사진행상태", value=defaults.get("status", ""), key=f"{key_prefix}_status")
+    return detail_values
 
 def clear_schedule_edit_query_params():
     for key in ["edit_site", "edit_idx"]:
@@ -615,16 +659,7 @@ def show_schedule_edit_dialog(site_name, step_idx):
 
         st.markdown("#### 현장 상세정보 수정")
         defaults = get_site_detail_defaults(steps)
-        d1, d2 = st.columns(2)
-        detail_values = {}
-        with d1:
-            detail_values["site_office"] = st.text_input("현장사무실", value=defaults.get("site_office", ""))
-            detail_values["construction_start"] = st.text_input("착공일", value=defaults.get("construction_start", ""), placeholder="예: 2026-03-01")
-            detail_values["total_cost"] = st.text_input("총공사비", value=defaults.get("total_cost", ""), placeholder="예: 120억 원")
-        with d2:
-            detail_values["postal_address"] = st.text_input("별도 우편 주소", value=defaults.get("postal_address", ""))
-            detail_values["construction_end"] = st.text_input("준공일", value=defaults.get("construction_end", ""), placeholder="예: 2027-12-31")
-            detail_values["progress_rate"] = st.text_input("공정률", value=defaults.get("progress_rate", ""), placeholder="예: 42%")
+        detail_values = render_site_detail_inputs(defaults, f"calendar_detail_{make_streamlit_key(site_name, step_idx)}")
 
         save_btn, close_btn = st.columns(2)
         with save_btn:
@@ -1282,8 +1317,9 @@ def process_excel_schedule(file):
             status = get_row_value(row, ["공사진행상태", "공사 진행 상태", "진행상태"])
             builder = get_row_value(row, ["시공회사명", "시공사", "시공회사"])
             supervisor = get_row_value(row, ["감리회사명", "감리사", "감리회사"])
-            manager = get_row_value(row, ["성명", "현장대리인", "담당자"])
-            phone = get_row_value(row, ["전화번호", "연락처", "휴대폰"])
+            manager = get_row_value(row, ["현장대리인 성명", "현장대리인명", "현장대리인", "성명", "담당자"])
+            phone = get_row_value(row, ["현장대리인 전화번호", "현장대리인 연락처", "현장대리인 휴대폰", "전화번호", "연락처", "휴대폰"])
+            email = get_row_value(row, ["현장대리인 이메일", "현장대리인 메일", "이메일", "메일", "E-mail", "Email", "email"])
 
             detail_values = {}
             for key, _, aliases in SITE_DETAIL_FIELDS:
@@ -1297,6 +1333,7 @@ def process_excel_schedule(file):
             if builder: memo_lines.append(f"👷 시공사: {builder}")
             if supervisor: memo_lines.append(f"🔍 감리사: {supervisor}")
             if manager: memo_lines.append(f"👤 현장대리인: {manager} ({phone})" if phone else f"👤 현장대리인: {manager}")
+            if email: memo_lines.append(f"✉️ 이메일: {email}")
             if status: memo_lines.append(f"📌 공사진행상태: {status}")
             memo = "\n".join(memo_lines)
 
@@ -1402,15 +1439,8 @@ def main():
                 new_team = st.text_input("담당조", placeholder="예: 1조")
             with pp2:
                 new_inspectors = st.text_input("점검자", placeholder="예: 홍길동, 김철수")
-            new_office = st.text_input("현장사무실")
-            new_postal_address = st.text_input("별도 우편 주소")
-            f1, f2 = st.columns(2)
-            with f1:
-                new_construction_start = st.text_input("착공일", placeholder="예: 2026-03-01")
-                new_total_cost = st.text_input("총공사비", placeholder="예: 120억 원")
-            with f2:
-                new_construction_end = st.text_input("준공일", placeholder="예: 2027-12-31")
-                new_progress_rate = st.text_input("공정률", placeholder="예: 42%")
+            st.markdown("#### 현장 상세정보")
+            new_detail_values = render_site_detail_inputs({}, "new_project_detail")
 
             if st.form_submit_button("초기 점검일정 생성"):
                 if new_site_name and new_site_name not in st.session_state.site_data:
@@ -1423,12 +1453,7 @@ def main():
                             "inspection_period": new_inspection_period,
                             "team": new_team,
                             "inspectors": new_inspectors,
-                            "site_office": new_office,
-                            "postal_address": new_postal_address,
-                            "construction_start": new_construction_start,
-                            "construction_end": new_construction_end,
-                            "total_cost": new_total_cost,
-                            "progress_rate": new_progress_rate,
+                            **new_detail_values,
                         }
                     ]
                     save_data(st.session_state.site_data)
@@ -1495,16 +1520,7 @@ def main():
         with st.expander("🏗️ 현장 기본정보 수정", expanded=False):
             defaults = get_site_detail_defaults(steps)
             with st.form(f"site_detail_form_{selected_site}"):
-                sd1, sd2 = st.columns(2)
-                detail_values = {}
-                with sd1:
-                    detail_values["site_office"] = st.text_input("현장사무실", value=defaults.get("site_office", ""))
-                    detail_values["construction_start"] = st.text_input("착공일", value=defaults.get("construction_start", ""))
-                    detail_values["total_cost"] = st.text_input("총공사비", value=defaults.get("total_cost", ""))
-                with sd2:
-                    detail_values["postal_address"] = st.text_input("별도 우편 주소", value=defaults.get("postal_address", ""))
-                    detail_values["construction_end"] = st.text_input("준공일", value=defaults.get("construction_end", ""))
-                    detail_values["progress_rate"] = st.text_input("공정률", value=defaults.get("progress_rate", ""))
+                detail_values = render_site_detail_inputs(defaults, f"site_detail_{make_streamlit_key(selected_site)}")
                 if st.form_submit_button("현장 기본정보 저장", type="primary", use_container_width=True):
                     apply_site_details_to_all_steps(selected_site, detail_values)
                     save_data(st.session_state.site_data)
