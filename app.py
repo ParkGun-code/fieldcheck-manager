@@ -1494,7 +1494,7 @@ def main():
     if "edit_site" in st.query_params or "edit_idx" in st.query_params:
         clear_schedule_edit_query_params()
 
-    st.title("🏗️ 건설현장 벌점 및 문서 통합 관리 시스템")
+    st.title("건설공사 현장점검 통합 관리 시스템")
 
     with st.sidebar:
         st.header("📁 엑셀 일정 일괄 등록")
