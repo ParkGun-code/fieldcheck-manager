@@ -429,16 +429,33 @@ TEAM_PASTEL_COLORS = [
 
 def get_team_pastel_color(team_value):
     """담당조별로 달력 이벤트의 배경색을 다르게 지정합니다."""
-    team_value = strip_wrapping_brackets(team_value)
-    if not team_value:
+    normalized = normalize_team_for_sort(team_value)
+    if not normalized:
         return "#F5F5F5"
 
-    number_match = re.search(r"\d+", team_value)
+    fixed_colors = {
+        "1조": "#E3F2FD",
+        "2조": "#E8F5E9",
+        "3조": "#FFF3E0",
+        "TF1조": "#F3E5F5",
+        "TF2조": "#FCE4EC",
+    }
+
+    if re.search(r"^TF0*1조?$", normalized):
+        return fixed_colors["TF1조"]
+    if re.search(r"^TF0*2조?$", normalized):
+        return fixed_colors["TF2조"]
+
+    plain_match = re.search(r"^(?:제)?0*([1-3])조?$", normalized)
+    if plain_match:
+        return fixed_colors[f"{int(plain_match.group(1))}조"]
+
+    number_match = re.search(r"(\d+)", normalized)
     if number_match:
-        idx = (int(number_match.group()) - 1) % len(TEAM_PASTEL_COLORS)
+        idx = (int(number_match.group(1)) - 1) % len(TEAM_PASTEL_COLORS)
         return TEAM_PASTEL_COLORS[idx]
 
-    idx = sum(ord(ch) for ch in team_value) % len(TEAM_PASTEL_COLORS)
+    idx = sum(ord(ch) for ch in normalized) % len(TEAM_PASTEL_COLORS)
     return TEAM_PASTEL_COLORS[idx]
 
 
@@ -497,18 +514,99 @@ def make_edit_query_url(site, step_idx):
 
 
 def render_calendar_event_link(site, step_idx, label, bg_color):
-    """네모 버튼 대신 파스텔 배경 한 줄 링크로 달력 이벤트를 표시합니다."""
+    """이전 HTML 링크 방식은 새 브라우저 창/세션 이동 문제 때문에 더 이상 사용하지 않습니다."""
     safe_label = html_lib.escape(label)
     safe_bg = html_lib.escape(bg_color, quote=True)
-    href = html_lib.escape(make_edit_query_url(site, step_idx), quote=True)
     st.markdown(
         f"""
-        <a class="calendar-event-link" href="{href}" style="background:{safe_bg};">
+        <span class="calendar-event-link" style="background:{safe_bg};">
             {safe_label}
-        </a>
+        </span>
         """,
         unsafe_allow_html=True,
     )
+
+
+def inject_calendar_button_style():
+    """Streamlit 버튼을 링크 이동 없이 달력 항목처럼 보이게 스타일링합니다."""
+    color_map = {
+        "1조": "#E3F2FD",
+        "2조": "#E8F5E9",
+        "3조": "#FFF3E0",
+        "TF1조": "#F3E5F5",
+        "TF2조": "#FCE4EC",
+    }
+    style_js = rf"""
+    <script>
+    const doc = window.parent.document;
+    const colorMap = {json.dumps(color_map, ensure_ascii=False)};
+
+    function normalizeTeam(team) {{
+        return (team || '').replace(/\s+/g, '').toUpperCase();
+    }}
+
+    function teamFromCalendarLabel(text) {{
+        const matches = Array.from((text || '').matchAll(/\[([^\]]+)\]/g)).map(m => normalizeTeam(m[1]));
+        for (const item of matches) {{
+            if (/^TF0*1조?$/.test(item)) return 'TF1조';
+            if (/^TF0*2조?$/.test(item)) return 'TF2조';
+            const plain = item.match(/^(?:제)?0*([1-3])조?$/);
+            if (plain) return `${{parseInt(plain[1], 10)}}조`;
+        }}
+        return '';
+    }}
+
+    function styleCalendarButtons() {{
+        const buttons = doc.querySelectorAll('button');
+        buttons.forEach(btn => {{
+            const text = (btn.innerText || '').trim();
+            const isCalendarText = /^\[[^\]]+\]/.test(text);
+            if (!isCalendarText) return;
+            const team = teamFromCalendarLabel(text);
+
+            const color = colorMap[team] || '#F5F5F5';
+            btn.dataset.calendarEventButton = 'true';
+            btn.style.backgroundColor = color;
+            btn.style.border = '0';
+            btn.style.boxShadow = 'none';
+            btn.style.outline = 'none';
+            btn.style.borderRadius = '5px';
+            btn.style.minHeight = '24px';
+            btn.style.height = '24px';
+            btn.style.padding = '2px 7px';
+            btn.style.margin = '2px 0';
+            btn.style.justifyContent = 'flex-start';
+            btn.style.alignItems = 'center';
+            btn.style.textAlign = 'left';
+            btn.style.overflow = 'hidden';
+            btn.style.whiteSpace = 'nowrap';
+            btn.style.textOverflow = 'ellipsis';
+            btn.style.color = '#111827';
+            btn.style.width = '100%';
+
+            const p = btn.querySelector('p');
+            if (p) {{
+                p.style.width = '100%';
+                p.style.margin = '0';
+                p.style.textAlign = 'left';
+                p.style.overflow = 'hidden';
+                p.style.whiteSpace = 'nowrap';
+                p.style.textOverflow = 'ellipsis';
+                p.style.fontSize = '0.82rem';
+                p.style.lineHeight = '1.2';
+            }}
+        }});
+    }}
+
+    const observer = new MutationObserver(styleCalendarButtons);
+    observer.observe(doc.body, {{ childList: true, subtree: true }});
+    styleCalendarButtons();
+    setTimeout(styleCalendarButtons, 50);
+    setTimeout(styleCalendarButtons, 250);
+    setTimeout(styleCalendarButtons, 800);
+    </script>
+    """
+    components.html(style_js, height=0, width=0)
 
 def get_site_detail_defaults(steps):
     """같은 현장의 여러 일정 중 먼저 입력된 상세정보를 기본값으로 사용합니다."""
@@ -698,35 +796,18 @@ def make_streamlit_key(*parts):
 
 def render_streamlit_calendar(site_data, year, month, selected_site=None):
     """
-    components.html() iframe 방식 대신 Streamlit 네이티브 버튼으로 달력을 렌더링합니다.
-    달력 버튼은 아이콘 없이 표시하고, 문구는 좌측 정렬합니다.
+    Streamlit 네이티브 버튼으로 달력을 렌더링합니다.
+    HTML 링크를 쓰지 않아 클릭 시 새 브라우저 창/새 세션이 열리지 않습니다.
     """
     cal = calendar.monthcalendar(year, month)
 
     st.markdown("""
     <style>
-    .calendar-event-link {
-        display: block;
-        width: 100%;
-        box-sizing: border-box;
-        margin: 2px 0;
-        padding: 3px 7px;
-        border: none !important;
-        border-radius: 5px;
-        box-shadow: none !important;
-        color: #111827 !important;
-        font-size: 0.82rem;
-        line-height: 1.35;
-        text-align: left;
-        text-decoration: none !important;
+    button[data-calendar-event-button="true"],
+    button[data-calendar-event-button="true"] p {
         white-space: nowrap !important;
         overflow: hidden !important;
         text-overflow: ellipsis !important;
-        word-break: keep-all;
-    }
-    .calendar-event-link:hover {
-        filter: brightness(0.97);
-        text-decoration: none !important;
     }
     .calendar-today-badge {
         display: inline-block;
@@ -743,6 +824,7 @@ def render_streamlit_calendar(site_data, year, month, selected_site=None):
     }
     </style>
     """, unsafe_allow_html=True)
+    inject_calendar_button_style()
 
     header_cols = st.columns(7, gap="small")
     for col, day_name in zip(header_cols, ['월', '화', '수', '목', '금', '토', '일']):
@@ -778,9 +860,9 @@ def render_streamlit_calendar(site_data, year, month, selected_site=None):
 
                     for event_no, (site, step_idx, step) in enumerate(day_events):
                         label = truncate_label(make_calendar_event_label(site, step), max_chars=28)
-                        team = get_step_team_value(step)
-                        bg_color = get_team_pastel_color(team)
-                        render_calendar_event_link(site, step_idx, label, bg_color)
+                        btn_key = make_streamlit_key("cal_btn", year, month, week_idx, col_idx, event_no, site, step_idx)
+                        if st.button(label, key=btn_key, use_container_width=True):
+                            show_schedule_edit_dialog(site, step_idx)
 
 # ==========================================
 # 📅 4. 중앙 달력 렌더링 함수
@@ -1407,9 +1489,10 @@ def main():
     if "cal_year" not in st.session_state: st.session_state.cal_year = date.today().year
     if "cal_month" not in st.session_state: st.session_state.cal_month = date.today().month
 
-    # HTML 링크로 달력 항목을 클릭했을 때 수정 다이얼로그를 엽니다.
-    if "edit_site" in st.query_params and "edit_idx" in st.query_params:
-        show_schedule_edit_dialog(st.query_params.get("edit_site"), st.query_params.get("edit_idx"))
+    # 예전 HTML 링크 방식에서 남은 수정용 URL 파라미터가 있으면 제거합니다.
+    # 현재는 달력 버튼 클릭 시 같은 화면에서 바로 다이얼로그를 엽니다.
+    if "edit_site" in st.query_params or "edit_idx" in st.query_params:
+        clear_schedule_edit_query_params()
 
     st.title("🏗️ 건설현장 벌점 및 문서 통합 관리 시스템")
 
@@ -1485,7 +1568,7 @@ def main():
                 st.rerun()
 
     st.subheader("🗓️ 프로젝트 전체 일정 캘린더")
-    st.caption("현장명을 클릭하면 점검시기, 담당조, 점검자, 현장정보와 점검일정을 바로 수정할 수 있습니다. 달력 문구는 한 줄로 표시되고 조별 파스텔 배경색으로 구분됩니다.")
+    st.caption("현장명을 클릭하면 현재 화면에서 점검시기, 담당조, 점검자, 현장정보와 점검일정을 바로 수정할 수 있습니다. 달력 문구는 한 줄로 표시되고 조별 파스텔 배경색으로 구분됩니다.")
     c1, c2, c3 = st.columns([1, 4, 1])
     with c1:
         if st.button("◀ 이전 달", use_container_width=True):
