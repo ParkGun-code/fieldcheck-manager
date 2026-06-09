@@ -22,6 +22,7 @@ import json
 import re
 import html as html_lib
 from textwrap import dedent
+from urllib.parse import quote
 
 # ==========================================
 # 🛑 HWP -> PDF 변환용 라이브러리 (윈도우 전용)
@@ -400,6 +401,53 @@ def make_site_list_label(site, site_data, max_chars=34):
     step = get_representative_step_for_site(site_data.get(site, []))
     return truncate_label(make_calendar_event_label(site, step), max_chars=max_chars)
 
+
+TEAM_PASTEL_COLORS = [
+    "#E3F2FD",  # 1조: 파스텔 블루
+    "#E8F5E9",  # 2조: 파스텔 그린
+    "#FFF3E0",  # 3조: 파스텔 오렌지
+    "#F3E5F5",  # 4조: 파스텔 퍼플
+    "#FCE4EC",  # 5조: 파스텔 핑크
+    "#E0F7FA",  # 6조: 파스텔 민트
+    "#FFFDE7",  # 7조: 파스텔 옐로우
+    "#ECEFF1",  # 8조: 파스텔 그레이
+]
+
+
+def get_team_pastel_color(team_value):
+    """담당조별로 달력 이벤트의 배경색을 다르게 지정합니다."""
+    team_value = strip_wrapping_brackets(team_value)
+    if not team_value:
+        return "#F5F5F5"
+
+    number_match = re.search(r"\d+", team_value)
+    if number_match:
+        idx = (int(number_match.group()) - 1) % len(TEAM_PASTEL_COLORS)
+        return TEAM_PASTEL_COLORS[idx]
+
+    idx = sum(ord(ch) for ch in team_value) % len(TEAM_PASTEL_COLORS)
+    return TEAM_PASTEL_COLORS[idx]
+
+
+def make_edit_query_url(site, step_idx):
+    """HTML 링크 클릭 시 Streamlit query param으로 수정 다이얼로그를 열기 위한 URL을 만듭니다."""
+    return f"?edit_site={quote(clean_cell(site), safe='')}&edit_idx={quote(str(step_idx), safe='')}"
+
+
+def render_calendar_event_link(site, step_idx, label, bg_color):
+    """네모 버튼 대신 파스텔 배경 한 줄 링크로 달력 이벤트를 표시합니다."""
+    safe_label = html_lib.escape(label)
+    safe_bg = html_lib.escape(bg_color, quote=True)
+    href = html_lib.escape(make_edit_query_url(site, step_idx), quote=True)
+    st.markdown(
+        f"""
+        <a class="calendar-event-link" href="{href}" style="background:{safe_bg};">
+            {safe_label}
+        </a>
+        """,
+        unsafe_allow_html=True,
+    )
+
 def get_site_detail_defaults(steps):
     """같은 현장의 여러 일정 중 먼저 입력된 상세정보를 기본값으로 사용합니다."""
     defaults = {key: "" for key, _, _ in SITE_DETAIL_FIELDS}
@@ -568,33 +616,28 @@ def render_streamlit_calendar(site_data, year, month, selected_site=None):
 
     st.markdown("""
     <style>
-    div[data-testid="stVerticalBlockBorderWrapper"] button[kind="secondary"] {
-        min-height: 34px;
-        white-space: nowrap !important;
-        word-break: keep-all;
-        line-height: 1.25;
-        font-size: 0.82rem;
-        padding: 0.35rem 0.45rem;
-        text-align: left !important;
-        justify-content: flex-start !important;
-        align-items: center !important;
-        overflow: hidden !important;
-    }
-    div[data-testid="stVerticalBlockBorderWrapper"] button[kind="secondary"] p,
-    div[data-testid="stVerticalBlockBorderWrapper"] button[data-testid="stBaseButton-secondary"] p {
-        text-align: left !important;
+    .calendar-event-link {
+        display: block;
         width: 100%;
-        margin: 0;
+        box-sizing: border-box;
+        margin: 2px 0;
+        padding: 3px 7px;
+        border: none !important;
+        border-radius: 5px;
+        box-shadow: none !important;
+        color: #111827 !important;
+        font-size: 0.82rem;
+        line-height: 1.35;
+        text-align: left;
+        text-decoration: none !important;
+        white-space: nowrap !important;
         overflow: hidden !important;
         text-overflow: ellipsis !important;
-        white-space: nowrap !important;
-        display: block !important;
+        word-break: keep-all;
     }
-    div[data-testid="stVerticalBlockBorderWrapper"] button[data-testid="stBaseButton-secondary"] {
-        text-align: left !important;
-        justify-content: flex-start !important;
-        align-items: center !important;
-        overflow: hidden !important;
+    .calendar-event-link:hover {
+        filter: brightness(0.97);
+        text-decoration: none !important;
     }
     .calendar-today-badge {
         display: inline-block;
@@ -602,6 +645,12 @@ def render_streamlit_calendar(site_data, year, month, selected_site=None):
         color: #2563eb;
         font-weight: 700;
         margin-left: 4px;
+    }
+    section[data-testid="stSidebar"] div[role="radiogroup"] label p {
+        max-width: 235px;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+        white-space: nowrap !important;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -637,12 +686,10 @@ def render_streamlit_calendar(site_data, year, month, selected_site=None):
                         continue
 
                     for event_no, (site, step_idx, step) in enumerate(day_events):
-                        label = truncate_label(make_calendar_event_label(site, step), max_chars=34)
-
-                        # help 옵션을 넣지 않아 마우스 오버 미리보기가 뜨지 않습니다.
-                        btn_key = make_streamlit_key("cal_btn", year, month, week_idx, col_idx, event_no, site, step_idx)
-                        if st.button(label, key=btn_key, use_container_width=True):
-                            show_schedule_edit_dialog(site, step_idx)
+                        label = truncate_label(make_calendar_event_label(site, step), max_chars=28)
+                        team = clean_cell(step.get("team", "")) or extract_team_from_desc(step.get("desc", ""))
+                        bg_color = get_team_pastel_color(team)
+                        render_calendar_event_link(site, step_idx, label, bg_color)
 
 # ==========================================
 # 📅 4. 중앙 달력 렌더링 함수
@@ -1255,6 +1302,10 @@ def main():
     if "cal_year" not in st.session_state: st.session_state.cal_year = date.today().year
     if "cal_month" not in st.session_state: st.session_state.cal_month = date.today().month
 
+    # HTML 링크로 달력 항목을 클릭했을 때 수정 다이얼로그를 엽니다.
+    if "edit_site" in st.query_params and "edit_idx" in st.query_params:
+        show_schedule_edit_dialog(st.query_params.get("edit_site"), st.query_params.get("edit_idx"))
+
     st.title("🏗️ 건설현장 벌점 및 문서 통합 관리 시스템")
 
     with st.sidebar:
@@ -1341,7 +1392,7 @@ def main():
                 st.rerun()
 
     st.subheader("🗓️ 프로젝트 전체 일정 캘린더")
-    st.caption("현장명을 클릭하면 점검시기, 담당조, 점검자, 현장정보와 점검일정을 바로 수정할 수 있습니다. 마우스 오버 미리보기는 표시하지 않습니다.")
+    st.caption("현장명을 클릭하면 점검시기, 담당조, 점검자, 현장정보와 점검일정을 바로 수정할 수 있습니다. 달력 문구는 한 줄로 표시되고 조별 파스텔 배경색으로 구분됩니다.")
     c1, c2, c3 = st.columns([1, 4, 1])
     with c1:
         if st.button("◀ 이전 달", use_container_width=True):
