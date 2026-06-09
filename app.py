@@ -66,6 +66,11 @@ st.set_page_config(page_title="건설현장 벌점 통합 관리 웹", page_icon
 SHARED_USER_ID = "molitdj"
 SHARED_PASSWORD = "eowjscjd1!"
 
+# 새로고침/달력 항목 클릭 시에도 로그인 상태를 유지하기 위한 URL 세션 토큰입니다.
+# 운영 배포 시에는 별도 인증/쿠키 방식으로 교체하는 것을 권장합니다.
+AUTH_QUERY_KEY = "auth"
+AUTH_QUERY_VALUE = "molitdj_logged_in"
+
 GEMINI_API_KEY = "AIzaSyBRSKqPy-IVLqAqICwaJmli5YKifNcRdoA"  
 pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 
@@ -429,9 +434,58 @@ def get_team_pastel_color(team_value):
     return TEAM_PASTEL_COLORS[idx]
 
 
+def normalize_team_for_sort(team_value):
+    """1조, 2조, 3조, TF1조, TF2조 순으로 정렬하기 위한 담당조 표준화."""
+    team_value = strip_wrapping_brackets(team_value)
+    return re.sub(r"\s+", "", team_value).upper()
+
+
+def get_team_sort_rank(team_value):
+    """달력 같은 날짜 안의 현장 표시 순서: 1조 → 2조 → 3조 → TF1조 → TF2조 → 기타."""
+    normalized = normalize_team_for_sort(team_value)
+
+    if re.search(r"^TF0*1조?$", normalized):
+        return 4
+    if re.search(r"^TF0*2조?$", normalized):
+        return 5
+
+    plain_match = re.search(r"^(?:제)?0*([1-3])조?$", normalized)
+    if plain_match:
+        return int(plain_match.group(1))
+
+    # 기타 조는 위 5개 다음에 숫자순으로 배치합니다.
+    number_match = re.search(r"(\d+)", normalized)
+    if number_match:
+        return 100 + int(number_match.group(1))
+
+    return 999
+
+
+def get_step_team_value(step):
+    """step에 저장된 담당조가 없으면 업무명([1조] 등)에서 담당조를 추출합니다."""
+    return clean_cell(step.get("team", "")) or extract_team_from_desc(step.get("desc", ""))
+
+
+def calendar_event_sort_key(event_tuple):
+    """같은 날짜의 달력 항목 정렬 기준."""
+    site, step_idx, step = event_tuple
+    return (
+        get_team_sort_rank(get_step_team_value(step)),
+        normalize_team_for_sort(get_step_team_value(step)),
+        clean_cell(site),
+        step_idx,
+    )
+
+
 def make_edit_query_url(site, step_idx):
-    """HTML 링크 클릭 시 Streamlit query param으로 수정 다이얼로그를 열기 위한 URL을 만듭니다."""
-    return f"?edit_site={quote(clean_cell(site), safe='')}&edit_idx={quote(str(step_idx), safe='')}"
+    """HTML 링크 클릭 시 Streamlit query param으로 수정 다이얼로그를 열기 위한 URL을 만듭니다.
+    auth 값을 함께 넘겨 달력 항목 클릭 후에도 로그인 화면으로 돌아가지 않게 합니다.
+    """
+    return (
+        f"?{AUTH_QUERY_KEY}={quote(AUTH_QUERY_VALUE, safe='')}"
+        f"&edit_site={quote(clean_cell(site), safe='')}"
+        f"&edit_idx={quote(str(step_idx), safe='')}"
+    )
 
 
 def render_calendar_event_link(site, step_idx, label, bg_color):
@@ -685,9 +739,11 @@ def render_streamlit_calendar(site_data, year, month, selected_site=None):
                         st.caption(" ")
                         continue
 
+                    day_events.sort(key=calendar_event_sort_key)
+
                     for event_no, (site, step_idx, step) in enumerate(day_events):
                         label = truncate_label(make_calendar_event_label(site, step), max_chars=28)
-                        team = clean_cell(step.get("team", "")) or extract_team_from_desc(step.get("desc", ""))
+                        team = get_step_team_value(step)
                         bg_color = get_team_pastel_color(team)
                         render_calendar_event_link(site, step_idx, label, bg_color)
 
@@ -1070,8 +1126,19 @@ def get_ai_summary_stream(file_path):
 # 💾 6. 데이터 처리 (엑셀/CSV 파싱 포함)
 # ==========================================
 def check_password():
-    if "logged_in" not in st.session_state: st.session_state["logged_in"] = False
-    if st.session_state["logged_in"]: return True
+    """최초 로그인 후에는 새로고침/달력 항목 클릭에도 로그인 상태를 유지합니다."""
+    if "logged_in" not in st.session_state:
+        st.session_state["logged_in"] = False
+
+    # Streamlit 세션이 살아있는 동안은 그대로 통과합니다.
+    if st.session_state["logged_in"]:
+        return True
+
+    # 브라우저 새로고침이나 HTML 링크 클릭으로 새 세션이 잡혀도 URL auth 값이 있으면 통과합니다.
+    if st.query_params.get(AUTH_QUERY_KEY) == AUTH_QUERY_VALUE:
+        st.session_state["logged_in"] = True
+        return True
+
     st.markdown("## 🏛️ 건설현장 벌점 통합 관리 시스템 Login")
     with st.form("login_form"):
         user_id = st.text_input("아이디")
@@ -1079,6 +1146,7 @@ def check_password():
         if st.form_submit_button("접속하기"):
             if user_id == SHARED_USER_ID and password == SHARED_PASSWORD:
                 st.session_state["logged_in"] = True
+                st.query_params[AUTH_QUERY_KEY] = AUTH_QUERY_VALUE
                 st.rerun()
             else:
                 st.error("아이디 또는 비밀번호가 일치하지 않습니다.")
