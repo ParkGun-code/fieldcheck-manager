@@ -10,9 +10,8 @@ import zipfile
 import calendar
 from datetime import date, datetime, timedelta
 from urllib.parse import quote
-from typing import Dict, List, Any, Optional, Union # [수정] 타입 힌트 추가
+from typing import Dict, List, Any, Optional, Union 
 
-# [수정] 외부 환경변수 로드를 위한 dotenv 추가 (운영 시 .env 파일 활용)
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -57,7 +56,7 @@ def hwp_to_pdf(hwp_path: str) -> str:
         hwp.HAction.Run("FileSaveAsPdf") 
         hwp.Quit()
         return pdf_path
-    except Exception as e: # [수정] broad except 지양 및 예외 로깅
+    except Exception as e: 
         print(f"HWP->PDF 변환 에러: {e}")
         return hwp_path 
     finally:
@@ -71,14 +70,10 @@ def hwp_to_pdf(hwp_path: str) -> str:
 # ==========================================
 st.set_page_config(page_title="건설현장 벌점 통합 관리 웹", page_icon="🏛️", layout="wide")
 
-# [수정] 민감 정보 하드코딩 제거 및 환경변수/Secrets 활용
 SHARED_USER_ID = os.environ.get("ADMIN_ID", st.secrets.get("ADMIN_ID", "molitdj_default"))
 SHARED_PASSWORD = os.environ.get("ADMIN_PW", st.secrets.get("ADMIN_PW", "change_me!"))
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", st.secrets.get("GEMINI_API_KEY", ""))
 
-# [삭제] AUTH_QUERY_KEY, AUTH_QUERY_VALUE 삭제 (심각한 보안/인증 우회 취약점)
-
-# [수정] Tesseract 경로 환경변수화 (배포 환경 유연성 확보)
 tesseract_path = os.environ.get("TESSERACT_CMD_PATH", r'C:\Program Files\Tesseract-OCR\tesseract.exe')
 pytesseract.pytesseract.tesseract_cmd = tesseract_path
 
@@ -105,19 +100,16 @@ PENALTY_INTERVALS = [
 # 🛡️ 유틸리티 함수 (보안 및 데이터 안정성)
 # ==========================================
 def secure_filename(filename: str) -> str:
-    """[수정] Path Traversal 공격을 방어하기 위한 파일명 정제 함수"""
     filename = os.path.basename(filename)
     return re.sub(r'[^a-zA-Z0-9가-힣_\-\.]', '_', filename)
 
 def atomic_save_csv(filename: str, headers: List[str], rows: List[List[Any]]) -> None:
-    """[수정] 파일 저장 중 서버가 다운되어도 데이터가 깨지지 않도록 원자적(Atomic) 쓰기 구현"""
     temp_filename = f"{filename}.tmp"
     try:
         with open(temp_filename, 'w', newline='', encoding='utf-8-sig') as f:
             writer = csv.writer(f)
             writer.writerow(headers)
             writer.writerows(rows)
-        # 임시 파일을 원본 파일로 원자적 교체 (Race condition 최소화)
         os.replace(temp_filename, filename)
     except Exception as e:
         st.error(f"데이터 안전 저장 실패: {e}")
@@ -206,7 +198,7 @@ def show_file_dialog(file_path, file_name):
     st.markdown(f"### 📎 {file_name}")
     ext = os.path.splitext(file_path)[1].lower()
     
-    try: # [수정] 파일 읽기 중 발생할 수 있는 I/O 에러 방어
+    try: 
         if ext in ['.png', '.jpg', '.jpeg']:
             st.image(file_path, use_column_width=True)
         elif ext == '.pdf':
@@ -236,7 +228,7 @@ SITE_DETAIL_FIELDS = [
     ("builder", "시공사", ["시공사", "시공 회사", "시공회사", "시공회사명", "시공자", "시공자명", "건설사", "시공업체"]),
     ("supervisor", "감리사", ["감리사", "감리 회사", "감리회사", "감리회사명", "감리자", "감리자명", "감리업체"]),
     ("site_manager", "현장대리인", ["현장대리인", "현장 대리인", "현장대리인 성명", "현장대리인명", "대리인", "성명"]),
-    ("manager_phone", "현장대리인 전화번호", ["현장대리인 전화번호", "현장대리인 연락처", "현장대리인 휴대폰", "현장대리인 핸드폰", "대리인 전화번호", "대리인 연락처", "전화번호", "연락처", "휴대폰", "핸드폰"]),
+    ("manager_phone", "현장대리인 전화번호", ["현장대리인 전화번호", "현장대리인 연락처", "현장대리인 휴대폰", "현장대리인 핸드폰", "대리인 전화번호", "대리인 연락처", "전화번호", "연락처", "휴대폰", "핸 핸드폰"]),
     ("manager_email", "현장대리인 이메일", ["현장대리인 이메일", "현장대리인 메일", "현장대리인 E-mail", "현장대리인 email", "대리인 이메일", "이메일", "메일", "E-mail", "Email", "email"]),
     ("client", "발주처", ["발주처\n(인·허가 기관)", "발주처(인·허가 기관)", "발주처", "인허가기관", "인·허가 기관", "인허가 기관"]),
     ("status", "공사진행상태", ["공사진행상태", "공사 진행 상태", "진행상태", "공사상태", "현장상태"]),
@@ -320,7 +312,7 @@ def parse_date_value(value: Any, default_year: Optional[int] = None) -> Optional
         if len(numbers) >= 2:
             year = default_year or date.today().year
             return date(year, int(numbers[0]), int(numbers[1]))
-    except Exception as e: # [수정] bare except 방지
+    except Exception as e: 
         print(f"Date parse error: {e}")
         return None
     return None
@@ -463,69 +455,6 @@ def clear_schedule_edit_query_params():
             del st.query_params[key]
 
 
-def inject_calendar_button_style():
-    color_map = {
-        "1조": "#E3F2FD", "2조": "#E8F5E9", "3조": "#FFF3E0",
-        "TF1조": "#F3E5F5", "TF2조": "#FCE4EC",
-    }
-    style_js = rf"""
-    <script>
-    const doc = window.parent.document;
-    const colorMap = {json.dumps(color_map, ensure_ascii=False)};
-    function normalizeTeam(team) {{ return (team || '').replace(/\s+/g, '').toUpperCase(); }}
-    function teamFromCalendarLabel(text) {{
-        const matches = Array.from((text || '').matchAll(/\[([^\]]+)\]/g)).map(m => normalizeTeam(m[1]));
-        for (const item of matches) {{
-            if (/^TF0*1조?$/.test(item)) return 'TF1조';
-            if (/^TF0*2조?$/.test(item)) return 'TF2조';
-            const plain = item.match(/^(?:제)?0*([1-3])조?$/);
-            if (plain) return `${{parseInt(plain[1], 10)}}조`;
-        }}
-        return '';
-    }}
-    function styleCalendarButtons() {{
-        try {{
-            const buttons = doc.querySelectorAll('button');
-            buttons.forEach(btn => {{
-                const text = (btn.innerText || '').trim();
-                const isCalendarText = /^\[[^\]]+\]/.test(text);
-                if (!isCalendarText) return;
-                const team = teamFromCalendarLabel(text);
-                const color = colorMap[team] || '#F5F5F5';
-                btn.dataset.calendarEventButton = 'true';
-                btn.style.backgroundColor = color;
-                btn.style.border = '0';
-                btn.style.boxShadow = 'none';
-                btn.style.borderRadius = '5px';
-                btn.style.minHeight = '24px';
-                btn.style.height = '24px';
-                btn.style.padding = '2px 7px';
-                btn.style.margin = '2px 0';
-                btn.style.justifyContent = 'flex-start';
-                btn.style.textAlign = 'left';
-                btn.style.color = '#111827';
-                
-                const p = btn.querySelector('p');
-                if (p) {{
-                    p.style.width = '100%';
-                    p.style.margin = '0';
-                    p.style.textAlign = 'left';
-                    p.style.overflow = 'hidden';
-                    p.style.whiteSpace = 'nowrap';
-                    p.style.textOverflow = 'ellipsis';
-                    p.style.fontSize = '0.82rem';
-                }}
-            }});
-        }} catch(e) {{ console.error("Style application error", e); }} // [수정] JS 예외 방어
-    }}
-    const observer = new MutationObserver(styleCalendarButtons);
-    observer.observe(doc.body, {{ childList: true, subtree: true }});
-    styleCalendarButtons();
-    setTimeout(styleCalendarButtons, 500);
-    </script>
-    """
-    components.html(style_js, height=0, width=0)
-
 def get_site_detail_defaults(steps: List[dict]) -> dict:
     defaults = {key: "" for key, _, _ in SITE_DETAIL_FIELDS}
     for step in steps:
@@ -644,47 +573,201 @@ def show_schedule_edit_dialog(site_name: str, step_idx: int):
 
     if closed: st.rerun()
 
+
 # ==========================================
-# 📅 4. Streamlit 네이티브 달력 렌더링 함수
+# 📅 4. Streamlit 네이티브 달력 렌더링 함수 (수정됨)
 # ==========================================
 def make_streamlit_key(*parts) -> str:
     raw = "_".join(clean_cell(part) for part in parts)
     return re.sub(r"[^0-9a-zA-Z가-힣_]+", "_", raw)[:180]
 
+def inject_calendar_button_style():
+    js_code = """
+    <script>
+    const doc = window.parent.document;
+    
+    // 업로드된 이미지의 색상을 완벽히 재현하기 위한 컬러맵
+    const colorMap = {
+        "1조": { bg: "#AEE4FF", text: "#1A202C" }, // 라이트블루 ([휴가] 느낌)
+        "2조": { bg: "#60B65C", text: "#FFFFFF" }, // 그린 (TF 워크샵 느낌)
+        "3조": { bg: "#F99B62", text: "#FFFFFF" }, // 오렌지 (태국 클라이언트 방문 느낌)
+        "TF1조": { bg: "#FFF2A8", text: "#1A202C" }, // 옐로우 (대표님 보고 느낌)
+        "TF2조": { bg: "transparent", text: "#7A5299", borderLeft: "3px solid #7A5299" }, // 퍼플 텍스트 (클라이언트 느낌)
+    };
+    const defaultStyle = { bg: "#E2E8F0", text: "#1A202C" }; // 기본 회색 블록
+
+    function normalizeTeam(team) { return (team || '').replace(/\\s+/g, '').toUpperCase(); }
+    
+    function getStyle(teamRaw) {
+        const team = normalizeTeam(teamRaw);
+        if (/^TF0*1조?$/.test(team)) return colorMap["TF1조"];
+        if (/^TF0*2조?$/.test(team)) return colorMap["TF2조"];
+        const plain = team.match(/^(?:제)?0*([1-3])조?$/);
+        if (plain) return colorMap[plain[1] + "조"];
+        return defaultStyle;
+    }
+
+    function applyCalendarStyles() {
+        try {
+            // 1. 완벽한 격자(Grid) 구조 스타일링 적용
+            const calStarts = doc.querySelectorAll('.cal-cell-empty, .cal-day-num, .cal-header');
+            calStarts.forEach(el => {
+                const colDiv = el.closest('div[data-testid="column"]');
+                if (colDiv && colDiv.dataset.gridStyled !== 'true') {
+                    colDiv.dataset.gridStyled = 'true';
+                    colDiv.style.borderRight = '1px solid #E5E7EB';
+                    colDiv.style.borderBottom = '1px solid #E5E7EB';
+                    colDiv.style.padding = '0 0 4px 0'; // 좌우 패딩 제거하여 블록 꽉 채우기
+                    
+                    if (!el.classList.contains('cal-header')) {
+                        colDiv.style.minHeight = '120px';
+                    } else {
+                        colDiv.style.borderTop = '1px solid #E5E7EB';
+                        colDiv.style.backgroundColor = '#F9FAFB';
+                    }
+                    
+                    colDiv.style.width = '14.285%';
+                    colDiv.style.flex = '1 1 0%';
+
+                    const rowDiv = colDiv.closest('div[data-testid="stHorizontalBlock"]');
+                    if (rowDiv && rowDiv.dataset.gridStyled !== 'true') {
+                        rowDiv.dataset.gridStyled = 'true';
+                        rowDiv.style.gap = '0'; // 컬럼 간격 완전 제거
+                        rowDiv.style.borderLeft = '1px solid #E5E7EB';
+                    }
+                }
+            });
+
+            // 2. 일정 블록을 이미지와 같은 평면(Flat) 디자인으로 변경
+            const markers = doc.querySelectorAll('.event-marker:not([data-processed="true"])');
+            markers.forEach(marker => {
+                marker.dataset.processed = 'true';
+                const elemContainer = marker.closest('.element-container');
+                if (!elemContainer) return;
+                
+                elemContainer.style.display = 'none'; // 마커 숨김 처리
+                
+                let nextElemContainer = elemContainer.nextElementSibling;
+                // 실제 버튼을 찾을 때까지 요소 탐색
+                while (nextElemContainer && !nextElemContainer.querySelector('button')) {
+                    nextElemContainer = nextElemContainer.nextElementSibling;
+                }
+
+                if (!nextElemContainer) return;
+                
+                // 블록 간 상하 간격 제거
+                nextElemContainer.style.marginBottom = '0px';
+                nextElemContainer.style.marginTop = '0px';
+
+                const btn = nextElemContainer.querySelector('button');
+                if (btn) {
+                    const teamRaw = marker.dataset.team;
+                    const style = getStyle(teamRaw);
+                    
+                    btn.style.backgroundColor = style.bg;
+                    btn.style.color = style.text;
+                    btn.style.border = 'none';
+                    if (style.borderLeft) {
+                        btn.style.borderLeft = style.borderLeft;
+                    }
+                    btn.style.borderRadius = '0px'; // 각진 모서리 적용
+                    btn.style.padding = '2px 4px';
+                    btn.style.minHeight = '22px';
+                    btn.style.height = 'auto';
+                    btn.style.margin = '1px 0';
+                    btn.style.width = '100%';
+                    btn.style.display = 'block';
+                    btn.style.textAlign = 'left';
+                    
+                    const p = btn.querySelector('p');
+                    if (p) {
+                        p.style.fontSize = '12px';
+                        p.style.fontWeight = '500';
+                        p.style.color = style.text;
+                        p.style.margin = '0';
+                        p.style.textAlign = 'left';
+                        p.style.overflow = 'hidden';
+                        p.style.whiteSpace = 'nowrap';
+                        p.style.textOverflow = 'ellipsis';
+                    }
+                    
+                    // 호버 효과 제거
+                    btn.addEventListener('mouseenter', () => {
+                        btn.style.borderColor = 'transparent';
+                        btn.style.filter = 'brightness(0.95)';
+                    });
+                    btn.addEventListener('mouseleave', () => {
+                        btn.style.borderColor = 'transparent';
+                        btn.style.filter = 'none';
+                    });
+                }
+            });
+        } catch(e) { console.error("Grid Style application error", e); }
+    }
+
+    const observer = new MutationObserver(applyCalendarStyles);
+    observer.observe(doc.body, { childList: true, subtree: true });
+    applyCalendarStyles();
+    setTimeout(applyCalendarStyles, 500);
+    </script>
+    """
+    components.html(js_code, height=0, width=0)
+
 def render_streamlit_calendar(site_data: dict, year: int, month: int, selected_site: Optional[str] = None):
+    # 달력의 첫 요일을 일요일(SUNDAY)로 설정하여 이미지 구조 반영
+    calendar.setfirstweekday(calendar.SUNDAY)
     cal = calendar.monthcalendar(year, month)
+    
+    # CSS 스크립트 주입
     inject_calendar_button_style()
 
-    header_cols = st.columns(7, gap="small")
-    for col, day_name in zip(header_cols, ['월', '화', '수', '목', '금', '토', '일']):
+    # 달력 요일 헤더 (일요일 시작, 일요일 텍스트 빨간색)
+    header_cols = st.columns(7)
+    for col, day_name in zip(header_cols, ['일', '월', '화', '수', '목', '금', '토']):
+        color = "#e53e3e" if day_name == '일' else "#4a5568"
         with col:
-            st.markdown(f"<div style='text-align:center; font-weight:700; background:#f0f2f6; border:1px solid #ddd; padding:8px; border-radius:6px;'>{day_name}</div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='cal-header' style='text-align:center; font-size:13px; font-weight:bold; color:{color}; padding:4px;'>{day_name}</div>", unsafe_allow_html=True)
 
+    # 달력 그리드 렌더링
     for week_idx, week in enumerate(cal):
-        cols = st.columns(7, gap="small")
+        cols = st.columns(7)
         for col_idx, day in enumerate(week):
             with cols[col_idx]:
-                with st.container(height=185, border=True):
-                    if day == 0: continue
-                    current_date = date(year, month, day)
-                    today_badge = " <span style='color:blue; font-size:0.7em;'>오늘</span>" if current_date == date.today() else ""
-                    st.markdown(f"<b>{day}</b>{today_badge}", unsafe_allow_html=True)
+                if day == 0:
+                    st.markdown("<div class='cal-cell-empty' style='height:120px;'></div>", unsafe_allow_html=True)
+                    continue
 
-                    day_events = []
-                    for site, steps in site_data.items():
-                        if selected_site and selected_site != "전체 현장" and site != selected_site: continue
-                        for step_idx, step in enumerate(steps):
-                            if step.get('date') == current_date:
-                                day_events.append((site, step_idx, step))
+                current_date = date(year, month, day)
+                # 일요일 열(0번째)이면 날짜 색상을 빨간색으로 지정
+                day_color = "#e53e3e" if col_idx == 0 else "#4a5568"
+                
+                if current_date == date.today():
+                    bg_style = "background-color: #1a202c; color: white; border-radius: 50%; width: 24px; height: 24px; display: inline-flex; align-items: center; justify-content: center; font-weight: bold;"
+                    day_html = f"<div class='cal-day-num' style='padding:4px 6px; font-size:14px; text-align:left;'><span style='{bg_style}'>{day}</span></div>"
+                else:
+                    day_html = f"<div class='cal-day-num' style='color:{day_color}; padding:4px 6px; font-size:14px; text-align:left;'>{day}</div>"
+                
+                st.markdown(day_html, unsafe_allow_html=True)
 
-                    if not day_events: continue
-                    day_events.sort(key=calendar_event_sort_key)
+                day_events = []
+                for site, steps in site_data.items():
+                    if selected_site and selected_site != "전체 현장" and site != selected_site: continue
+                    for step_idx, step in enumerate(steps):
+                        if step.get('date') == current_date:
+                            day_events.append((site, step_idx, step))
 
-                    for event_no, (site, step_idx, step) in enumerate(day_events):
-                        label = truncate_label(make_calendar_event_label(site, step), max_chars=28)
-                        btn_key = make_streamlit_key("cal_btn", year, month, week_idx, col_idx, event_no, site, step_idx)
-                        if st.button(label, key=btn_key, use_container_width=True):
-                            show_schedule_edit_dialog(site, step_idx)
+                if not day_events: continue
+                day_events.sort(key=calendar_event_sort_key)
+
+                # 날짜에 해당하는 일정 버튼 렌더링 (보이지 않는 마커와 함께 배치)
+                for event_no, (site, step_idx, step) in enumerate(day_events):
+                    label = truncate_label(make_calendar_event_label(site, step), max_chars=28)
+                    btn_key = make_streamlit_key("cal_btn", year, month, week_idx, col_idx, event_no, site, step_idx)
+                    team_val = get_step_team_value(step)
+                    
+                    st.markdown(f"<div class='event-marker' data-team='{team_val}'></div>", unsafe_allow_html=True)
+                    if st.button(label, key=btn_key, use_container_width=True):
+                        show_schedule_edit_dialog(site, step_idx)
 
 # ==========================================
 # 🤖 5. 공무원 양식 AI 요약 프롬프트 적용
@@ -703,14 +786,14 @@ def get_ai_summary_stream(file_path: str):
     safe_filepath = None
     try:
         if ext in ['.pdf', '.png', '.jpg', '.jpeg', '.txt']:
-            safe_filename = secure_filename(f"temp_ai_upload_{int(time.time())}{ext}") # [수정] 보안 강화
+            safe_filename = secure_filename(f"temp_ai_upload_{int(time.time())}{ext}") 
             safe_filepath = os.path.join(ATTACH_DIR, safe_filename)
             shutil.copy2(file_path, safe_filepath)
             uploaded_file = client.files.upload(file=safe_filepath)
             
             if ext == '.pdf':
                 yield "📄 PDF 문서를 스캔하고 있습니다. (약 5~10초 소요)...\n\n"
-                max_retries = 15 # [수정] 무한루프 방지
+                max_retries = 15 
                 retries = 0
                 while retries < max_retries:
                     file_info = client.files.get(name=uploaded_file.name)
@@ -737,13 +820,12 @@ def get_ai_summary_stream(file_path: str):
             if uploaded_file: client.files.delete(name=uploaded_file.name)
             if safe_filepath and os.path.exists(safe_filepath): os.remove(safe_filepath)
         except Exception:
-            pass # 정리 작업 중 에러는 무시
+            pass 
 
 # ==========================================
 # 💾 6. 데이터 처리 (엑셀/CSV 파싱 포함)
 # ==========================================
 def check_password() -> bool:
-    """[수정] URL 기반 인증 우회 방지 및 강력한 세션 검증"""
     if st.session_state.get("logged_in"): return True
 
     st.markdown("## 🏛️ 건설현장 벌점 통합 관리 시스템 Login")
@@ -801,7 +883,6 @@ def load_data() -> dict:
     return site_data
 
 def save_data(site_data: dict) -> None:
-    # [수정] 원자적 쓰기를 통해 데이터 깨짐(Race Condition) 방지
     rows = []
     row_num = 1
     for name in sorted(site_data.keys()):
@@ -999,7 +1080,6 @@ def main():
                         save_data(st.session_state.site_data)
                         st.rerun()
 
-        # 페이지네이션 
         if "current_page" not in st.session_state: st.session_state.current_page = 1
         total_pages = max(1, (len(steps) - 1) // ITEMS_PER_PAGE + 1)
         st.session_state.current_page = min(st.session_state.current_page, total_pages)
@@ -1039,7 +1119,6 @@ def main():
                     uploaded_files = st.file_uploader("업로드", accept_multiple_files=True, key=f"up_{actual_idx}", label_visibility="collapsed")
                     if uploaded_files:
                         for uf in uploaded_files:
-                            # [수정] 파일명 정제 (보안)
                             safe_name = secure_filename(uf.name)
                             original_path = os.path.join(ATTACH_DIR, f"{selected_site}_{safe_name}")
                             if original_path not in steps[actual_idx].get('files', []):
@@ -1052,7 +1131,6 @@ def main():
                         save_data(st.session_state.site_data)
                         st.rerun()
 
-                    # 첨부파일 리스트 렌더링
                     existing_files = [f for f in steps[actual_idx].get('files', []) if os.path.exists(f)]
                     if len(existing_files) != len(steps[actual_idx].get('files', [])):
                         steps[actual_idx]['files'] = existing_files
