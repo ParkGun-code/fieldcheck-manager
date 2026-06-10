@@ -71,7 +71,7 @@ try:
     from google import genai
     GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", st.secrets.get("GEMINI_API_KEY", ""))
 except ImportError:
-    GEMINI_API_KEY = ""
+    GEMINI_API_KEY = "AIzaSyBRSKqPy-IVLqAqICwaJmli5YKifNcRdoA"
 
 DB_FILENAME = "penalty_database.csv"
 ATTACH_DIR = "attachments"
