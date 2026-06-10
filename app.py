@@ -110,7 +110,6 @@ def atomic_save_csv(filename: str, headers: List[str], rows: List[List[Any]]) ->
 # ==========================================
 # 🖱️ 2. 새창(다이얼로그) 기능
 # ==========================================
-# (드래그 기능은 다이얼로그 내부 요소이므로 CSS 충돌이 없도록 기존 JS 유지)
 def make_dialog_draggable():
     import streamlit.components.v1 as components
     drag_js = """
@@ -427,7 +426,6 @@ def make_streamlit_key(*parts) -> str:
     return re.sub(r"[^0-9a-zA-Z가-힣_]+", "_", raw)[:180]
 
 def get_team_style_class(teamRaw: str) -> str:
-    """파이썬에서 직접 데이터 속성(class)을 결정하여 HTML에 주입"""
     if not teamRaw: return "default"
     team = normalize_team_for_sort(teamRaw)
     if re.search(r"^TF0*1조?$", team): return "tf1"
@@ -437,15 +435,12 @@ def get_team_style_class(teamRaw: str) -> str:
     return "default"
 
 def inject_pure_css_calendar_style():
-    """자바스크립트를 완전히 배제하고 브라우저 네이티브 CSS(has 선택자)만 사용하여 레이아웃 붕괴 원천 차단"""
     CSS = """
     <style>
-    /* 달력 스크롤바 디자인 */
     div[data-testid="column"]:has(.cal-cell-marker)::-webkit-scrollbar { width: 4px; height: 4px; }
     div[data-testid="column"]:has(.cal-cell-marker)::-webkit-scrollbar-track { background: transparent; }
     div[data-testid="column"]:has(.cal-cell-marker)::-webkit-scrollbar-thumb { background-color: #CBD5E1; border-radius: 10px; }
     
-    /* 📱 모바일 대응: 화면이 좁아져도 7열이 세로로 무너지지 않고 강제 가로 배치 유지 (스와이프 스크롤) */
     div[data-testid="stHorizontalBlock"]:has(.cal-header-marker),
     div[data-testid="stHorizontalBlock"]:has(.cal-cell-marker) {
         display: flex !important;
@@ -459,7 +454,6 @@ def inject_pure_css_calendar_style():
         border-top: 1px solid #E5E7EB !important;
     }
 
-    /* 요일 헤더 및 날짜 셀의 폭 강제 고정 */
     div[data-testid="column"]:has(.cal-header-marker),
     div[data-testid="column"]:has(.cal-cell-marker) {
         width: 14.285% !important;
@@ -470,14 +464,12 @@ def inject_pure_css_calendar_style():
         padding: 4px !important;
     }
     
-    /* 요일 헤더 셀 디자인 */
     div[data-testid="column"]:has(.cal-header-marker) {
         background-color: #F8FAFC !important;
         padding: 8px 0 !important;
         border-bottom: 2px solid #94A3B8 !important;
     }
     
-    /* 날짜 셀의 스크롤 고정 */
     div[data-testid="column"]:has(.cal-cell-marker) {
         height: 140px !important;
         min-height: 140px !important;
@@ -486,7 +478,6 @@ def inject_pure_css_calendar_style():
         overflow-x: hidden !important;
     }
 
-    /* 스트림릿 기본 st.container 테두리 및 여백 무효화 */
     div[data-testid="column"]:has(.cal-cell-marker) div.element-container {
         margin-bottom: 0 !important;
         margin-top: 0 !important;
@@ -501,12 +492,10 @@ def inject_pure_css_calendar_style():
         gap: 0 !important;
     }
 
-    /* 식별용 마커 숨김 처리 */
     .cal-header-marker, .cal-cell-marker, .event-marker {
         display: none !important;
     }
 
-    /* 공통 버튼 디자인 (Flat Design) */
     div.element-container:has(div.event-marker) + div.element-container button {
         border: none !important;
         border-radius: 0px !important;
@@ -534,7 +523,6 @@ def inject_pure_css_calendar_style():
         border-color: transparent !important;
     }
 
-    /* 팀별 버튼 색상 매핑 (has 선택자 활용) */
     div.element-container:has(div[data-team="team1"]) + div.element-container button { background-color: #AEE4FF !important; color: #1A202C !important; }
     div.element-container:has(div[data-team="team2"]) + div.element-container button { background-color: #60B65C !important; color: #FFFFFF !important; }
     div.element-container:has(div[data-team="team3"]) + div.element-container button { background-color: #F99B62 !important; color: #FFFFFF !important; }
@@ -548,18 +536,14 @@ def render_streamlit_calendar(site_data: dict, year: int, month: int, selected_s
     calendar.setfirstweekday(calendar.SUNDAY)
     cal = calendar.monthcalendar(year, month)
     
-    # 순수 CSS 주입
     inject_pure_css_calendar_style()
 
-    # 달력 헤더 렌더링
     header_cols = st.columns(7)
     for col, day_name in zip(header_cols, ['일', '월', '화', '수', '목', '금', '토']):
         color = "#e53e3e" if day_name == '일' else "#4a5568"
         with col:
-            # cal-header-marker 를 삽입하여 CSS가 해당 열을 헤더로 인식하게 함
             st.markdown(f"<div class='cal-header-marker'></div><div style='text-align:center; font-size:13px; font-weight:bold; color:{color}; padding:6px;'>{day_name}</div>", unsafe_allow_html=True)
 
-    # 캘린더 그리드 렌더링
     for week_idx, week in enumerate(cal):
         cols = st.columns(7)
         for col_idx, day in enumerate(week):
@@ -584,10 +568,8 @@ def render_streamlit_calendar(site_data: dict, year: int, month: int, selected_s
 
                     day_events = []
                     for site, steps in site_data.items():
-                        # 특정 현장이 선택되었을 때 필터링
                         if selected_site and selected_site != "전체 현장" and site != selected_site: continue
                         for step_idx, step in enumerate(steps):
-                            # 정확히 일치하는 날짜에만 이벤트 추가
                             if step.get('date') == current_date:
                                 day_events.append((site, step_idx, step))
 
@@ -599,7 +581,6 @@ def render_streamlit_calendar(site_data: dict, year: int, month: int, selected_s
                         btn_key = make_streamlit_key("cal_btn", year, month, week_idx, col_idx, event_no, site, step_idx)
                         style_class = get_team_style_class(get_step_team_value(step))
                         
-                        # 이벤트 마커를 삽입하여 CSS가 바로 다음에 오는 st.button을 타겟팅하도록 함
                         st.markdown(f"<div class='event-marker' data-team='{style_class}'></div>", unsafe_allow_html=True)
                         if st.button(label, key=btn_key, use_container_width=True):
                             show_schedule_edit_dialog(site, step_idx)
@@ -853,7 +834,6 @@ def main():
             st.session_state.cal_month, st.session_state.cal_year = (1, st.session_state.cal_year + 1) if st.session_state.cal_month == 12 else (st.session_state.cal_month + 1, st.session_state.cal_year)
             st.rerun()
 
-    # ★ 캘린더 렌더링 호출
     render_streamlit_calendar(st.session_state.site_data, st.session_state.cal_year, st.session_state.cal_month, selected_site)
     st.divider()
 
@@ -937,19 +917,26 @@ def main():
                 with c3:
                     st.markdown("**📂 첨부 파일 (드래그 앤 드롭)**")
                     uploaded_files = st.file_uploader("업로드", accept_multiple_files=True, key=f"up_{actual_idx}", label_visibility="collapsed")
+                    
+                    # 💡 [수정] 무한 새로고침(깜빡임) 방지를 위한 로직 변경
                     if uploaded_files:
+                        files_changed = False
                         for uf in uploaded_files:
                             safe_name = secure_filename(uf.name)
                             original_path = os.path.join(ATTACH_DIR, f"{selected_site}_{safe_name}")
                             if original_path not in steps[actual_idx].get('files', []):
                                 with open(original_path, "wb") as f: f.write(uf.getbuffer())
                                 steps[actual_idx].setdefault('files', []).append(original_path)
+                                files_changed = True
                                 if original_path.lower().endswith(".hwp"):
                                     pdf_path = hwp_to_pdf(original_path)
                                     if pdf_path != original_path and os.path.exists(pdf_path) and pdf_path not in steps[actual_idx]['files']:
                                         steps[actual_idx]['files'].append(pdf_path)
-                        save_data(st.session_state.site_data)
-                        st.rerun()
+                        
+                        # 💡 [수정] 새로운 파일이 저장되었을 때만 데이터를 저장하고 화면을 새로고침합니다.
+                        if files_changed:
+                            save_data(st.session_state.site_data)
+                            st.rerun()
 
                     existing_files = [f for f in steps[actual_idx].get('files', []) if os.path.exists(f)]
                     if len(existing_files) != len(steps[actual_idx].get('files', [])):
@@ -962,7 +949,9 @@ def main():
                         ext = file_name.lower().split('.')[-1]
                         chk_col, btn_col1, btn_col2, btn_col3 = st.columns([5, 2, 2, 2])
                         with chk_col:
-                            if st.checkbox(f"📎 {file_name}", key=f"chk_{actual_idx}_{file_path}"): checked_files_to_download.append(file_path)
+                            if st.checkbox(f"📎 {file_name}", key=f"chk_{actual_idx}_{file_path}"):
+                                checked_files_to_download.append(file_path)
+                        
                         if ext in ['pdf', 'png', 'jpg', 'jpeg', 'txt']:
                             with btn_col1:
                                 if st.button("👁️", key=f"v_{actual_idx}_{file_path}", help="보기"): show_file_dialog(file_path, file_name)
@@ -971,6 +960,7 @@ def main():
                         else:
                             with btn_col1: st.write("")
                             with btn_col2: st.write("")
+                            
                         with btn_col3:
                             if st.button("🗑️ 삭제", key=f"delf_{actual_idx}_{file_path}", use_container_width=True):
                                 steps[actual_idx]['files'].remove(file_path)
@@ -988,7 +978,10 @@ def main():
                             label=f"💾 체크된 파일 {len(checked_files_to_download)}개 다운로드 (.zip)",
                             data=zip_buffer.getvalue(),
                             file_name=f"첨부파일_다운로드_{date.today().strftime('%Y%m%d')}.zip",
-                            mime="application/zip", type="primary", use_container_width=True, key=f"zip_dl_{actual_idx}"
+                            mime="application/zip",
+                            type="primary",
+                            use_container_width=True,
+                            key=f"zip_dl_{actual_idx}"
                         )
 
 if __name__ == "__main__":
