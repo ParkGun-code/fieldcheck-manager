@@ -228,7 +228,7 @@ SITE_DETAIL_FIELDS = [
     ("builder", "시공사", ["시공사", "시공 회사", "시공회사", "시공회사명", "시공자", "시공자명", "건설사", "시공업체"]),
     ("supervisor", "감리사", ["감리사", "감리 회사", "감리회사", "감리회사명", "감리자", "감리자명", "감리업체"]),
     ("site_manager", "현장대리인", ["현장대리인", "현장 대리인", "현장대리인 성명", "현장대리인명", "대리인", "성명"]),
-    ("manager_phone", "현장대리인 전화번호", ["현장대리인 전화번호", "현장대리인 연락처", "현장대리인 휴대폰", "현장대리인 핸드폰", "대리인 전화번호", "대리인 연락처", "전화번호", "연락처", "휴대폰", "핸 핸드폰"]),
+    ("manager_phone", "현장대리인 전화번호", ["현장대리인 전화번호", "현장대리인 연락처", "현장대리인 휴대폰", "현장대리인 핸드폰", "대리인 전화번호", "대리인 연락처", "전화번호", "연락처", "휴대폰", "핸드폰"]),
     ("manager_email", "현장대리인 이메일", ["현장대리인 이메일", "현장대리인 메일", "현장대리인 E-mail", "현장대리인 email", "대리인 이메일", "이메일", "메일", "E-mail", "Email", "email"]),
     ("client", "발주처", ["발주처\n(인·허가 기관)", "발주처(인·허가 기관)", "발주처", "인허가기관", "인·허가 기관", "인허가 기관"]),
     ("status", "공사진행상태", ["공사진행상태", "공사 진행 상태", "진행상태", "공사상태", "현장상태"]),
@@ -575,7 +575,7 @@ def show_schedule_edit_dialog(site_name: str, step_idx: int):
 
 
 # ==========================================
-# 📅 4. Streamlit 네이티브 달력 렌더링 함수 (수정됨)
+# 📅 4. Streamlit 네이티브 달력 렌더링 함수 (스크롤 및 구분선 수정됨)
 # ==========================================
 def make_streamlit_key(*parts) -> str:
     raw = "_".join(clean_cell(part) for part in parts)
@@ -586,15 +586,26 @@ def inject_calendar_button_style():
     <script>
     const doc = window.parent.document;
     
-    // 업로드된 이미지의 색상을 완벽히 재현하기 위한 컬러맵
+    // 스트림릿 내장 스크롤바 커스터마이징 (디자인 해치지 않게 얇게 처리)
+    if (!doc.getElementById('cal-custom-style')) {
+        const style = doc.createElement('style');
+        style.id = 'cal-custom-style';
+        style.innerHTML = `
+            .cal-scrollable::-webkit-scrollbar { width: 5px; }
+            .cal-scrollable::-webkit-scrollbar-track { background: transparent; }
+            .cal-scrollable::-webkit-scrollbar-thumb { background-color: #CBD5E1; border-radius: 10px; }
+        `;
+        doc.head.appendChild(style);
+    }
+
     const colorMap = {
-        "1조": { bg: "#AEE4FF", text: "#1A202C" }, // 라이트블루 ([휴가] 느낌)
-        "2조": { bg: "#60B65C", text: "#FFFFFF" }, // 그린 (TF 워크샵 느낌)
-        "3조": { bg: "#F99B62", text: "#FFFFFF" }, // 오렌지 (태국 클라이언트 방문 느낌)
-        "TF1조": { bg: "#FFF2A8", text: "#1A202C" }, // 옐로우 (대표님 보고 느낌)
-        "TF2조": { bg: "transparent", text: "#7A5299", borderLeft: "3px solid #7A5299" }, // 퍼플 텍스트 (클라이언트 느낌)
+        "1조": { bg: "#AEE4FF", text: "#1A202C" },
+        "2조": { bg: "#60B65C", text: "#FFFFFF" },
+        "3조": { bg: "#F99B62", text: "#FFFFFF" },
+        "TF1조": { bg: "#FFF2A8", text: "#1A202C" },
+        "TF2조": { bg: "transparent", text: "#7A5299", borderLeft: "3px solid #7A5299" },
     };
-    const defaultStyle = { bg: "#E2E8F0", text: "#1A202C" }; // 기본 회색 블록
+    const defaultStyle = { bg: "#E2E8F0", text: "#1A202C" };
 
     function normalizeTeam(team) { return (team || '').replace(/\\s+/g, '').toUpperCase(); }
     
@@ -609,7 +620,6 @@ def inject_calendar_button_style():
 
     function applyCalendarStyles() {
         try {
-            // 1. 완벽한 격자(Grid) 구조 스타일링 적용
             const calStarts = doc.querySelectorAll('.cal-cell-empty, .cal-day-num, .cal-header');
             calStarts.forEach(el => {
                 const colDiv = el.closest('div[data-testid="column"]');
@@ -617,10 +627,14 @@ def inject_calendar_button_style():
                     colDiv.dataset.gridStyled = 'true';
                     colDiv.style.borderRight = '1px solid #E5E7EB';
                     colDiv.style.borderBottom = '1px solid #E5E7EB';
-                    colDiv.style.padding = '0 0 4px 0'; // 좌우 패딩 제거하여 블록 꽉 채우기
+                    colDiv.style.padding = '0 0 4px 0'; 
                     
                     if (!el.classList.contains('cal-header')) {
-                        colDiv.style.minHeight = '120px';
+                        // 스크롤 기능 강제 주입
+                        colDiv.classList.add('cal-scrollable');
+                        colDiv.style.minHeight = '140px';
+                        colDiv.style.maxHeight = '140px';
+                        colDiv.style.overflowY = 'auto'; // 일정이 많을 경우 스크롤 생성
                     } else {
                         colDiv.style.borderTop = '1px solid #E5E7EB';
                         colDiv.style.backgroundColor = '#F9FAFB';
@@ -632,30 +646,27 @@ def inject_calendar_button_style():
                     const rowDiv = colDiv.closest('div[data-testid="stHorizontalBlock"]');
                     if (rowDiv && rowDiv.dataset.gridStyled !== 'true') {
                         rowDiv.dataset.gridStyled = 'true';
-                        rowDiv.style.gap = '0'; // 컬럼 간격 완전 제거
+                        rowDiv.style.gap = '0';
                         rowDiv.style.borderLeft = '1px solid #E5E7EB';
                     }
                 }
             });
 
-            // 2. 일정 블록을 이미지와 같은 평면(Flat) 디자인으로 변경
             const markers = doc.querySelectorAll('.event-marker:not([data-processed="true"])');
             markers.forEach(marker => {
                 marker.dataset.processed = 'true';
                 const elemContainer = marker.closest('.element-container');
                 if (!elemContainer) return;
                 
-                elemContainer.style.display = 'none'; // 마커 숨김 처리
+                elemContainer.style.display = 'none';
                 
                 let nextElemContainer = elemContainer.nextElementSibling;
-                // 실제 버튼을 찾을 때까지 요소 탐색
                 while (nextElemContainer && !nextElemContainer.querySelector('button')) {
                     nextElemContainer = nextElemContainer.nextElementSibling;
                 }
 
                 if (!nextElemContainer) return;
                 
-                // 블록 간 상하 간격 제거
                 nextElemContainer.style.marginBottom = '0px';
                 nextElemContainer.style.marginTop = '0px';
 
@@ -667,10 +678,8 @@ def inject_calendar_button_style():
                     btn.style.backgroundColor = style.bg;
                     btn.style.color = style.text;
                     btn.style.border = 'none';
-                    if (style.borderLeft) {
-                        btn.style.borderLeft = style.borderLeft;
-                    }
-                    btn.style.borderRadius = '0px'; // 각진 모서리 적용
+                    if (style.borderLeft) btn.style.borderLeft = style.borderLeft;
+                    btn.style.borderRadius = '0px'; 
                     btn.style.padding = '2px 4px';
                     btn.style.minHeight = '22px';
                     btn.style.height = 'auto';
@@ -691,7 +700,6 @@ def inject_calendar_button_style():
                         p.style.textOverflow = 'ellipsis';
                     }
                     
-                    // 호버 효과 제거
                     btn.addEventListener('mouseenter', () => {
                         btn.style.borderColor = 'transparent';
                         btn.style.filter = 'brightness(0.95)';
@@ -714,19 +722,18 @@ def inject_calendar_button_style():
     components.html(js_code, height=0, width=0)
 
 def render_streamlit_calendar(site_data: dict, year: int, month: int, selected_site: Optional[str] = None):
-    # 달력의 첫 요일을 일요일(SUNDAY)로 설정하여 이미지 구조 반영
     calendar.setfirstweekday(calendar.SUNDAY)
     cal = calendar.monthcalendar(year, month)
     
-    # CSS 스크립트 주입
     inject_calendar_button_style()
 
-    # 달력 요일 헤더 (일요일 시작, 일요일 텍스트 빨간색)
+    # 달력 요일 헤더 (구분선 추가)
     header_cols = st.columns(7)
     for col, day_name in zip(header_cols, ['일', '월', '화', '수', '목', '금', '토']):
         color = "#e53e3e" if day_name == '일' else "#4a5568"
         with col:
-            st.markdown(f"<div class='cal-header' style='text-align:center; font-size:13px; font-weight:bold; color:{color}; padding:4px;'>{day_name}</div>", unsafe_allow_html=True)
+            # 헤더 아래쪽에 조금 더 진한 테두리(border-bottom)를 주어 날짜 칸들과 명확히 구분
+            st.markdown(f"<div class='cal-header' style='text-align:center; font-size:13px; font-weight:bold; color:{color}; padding:6px; border-bottom: 2px solid #94A3B8;'>{day_name}</div>", unsafe_allow_html=True)
 
     # 달력 그리드 렌더링
     for week_idx, week in enumerate(cal):
@@ -738,7 +745,6 @@ def render_streamlit_calendar(site_data: dict, year: int, month: int, selected_s
                     continue
 
                 current_date = date(year, month, day)
-                # 일요일 열(0번째)이면 날짜 색상을 빨간색으로 지정
                 day_color = "#e53e3e" if col_idx == 0 else "#4a5568"
                 
                 if current_date == date.today():
@@ -759,7 +765,6 @@ def render_streamlit_calendar(site_data: dict, year: int, month: int, selected_s
                 if not day_events: continue
                 day_events.sort(key=calendar_event_sort_key)
 
-                # 날짜에 해당하는 일정 버튼 렌더링 (보이지 않는 마커와 함께 배치)
                 for event_no, (site, step_idx, step) in enumerate(day_events):
                     label = truncate_label(make_calendar_event_label(site, step), max_chars=28)
                     btn_key = make_streamlit_key("cal_btn", year, month, week_idx, col_idx, event_no, site, step_idx)
@@ -981,6 +986,33 @@ def main():
     st.title("🏗️ 건설현장 벌점 및 문서 통합 관리 시스템")
 
     with st.sidebar:
+        # 데이터 유실 방지를 위한 백업 및 복구 전용 UI 영역 추가
+        st.header("💾 데이터 백업 및 복구")
+        st.info("⚠️ 클라우드 수면 모드로 인한 데이터 초기화 대비용입니다. 주기적으로 백업을 다운로드 해두세요.")
+        
+        # 1. 현재 데이터 수동 백업(다운로드)
+        if os.path.exists(DB_FILENAME):
+            with open(DB_FILENAME, "rb") as f:
+                st.download_button(
+                    label="⬇️ 현재 데이터 백업 (다운로드)",
+                    data=f,
+                    file_name=f"backup_{date.today().strftime('%Y%m%d')}.csv",
+                    mime="text/csv",
+                    use_container_width=True
+                )
+                
+        # 2. 초기화 발생 시 복구(업로드)
+        backup_file = st.file_uploader("⬆️ 백업 파일 복구 (업로드)", type=['csv'], label_visibility="collapsed")
+        if backup_file and st.button("🔄 시스템 복구 실행", use_container_width=True):
+            with open(DB_FILENAME, "wb") as f:
+                f.write(backup_file.getbuffer())
+            st.session_state.site_data = load_data()
+            st.success("데이터가 성공적으로 복구되었습니다!")
+            time.sleep(1)
+            st.rerun()
+            
+        st.divider()
+
         st.header("📁 엑셀 일정 일괄 등록")
         excel_file = st.file_uploader("엑셀/CSV 파일 업로드", type=['csv', 'xlsx', 'xls'])
         if st.button("🚀 일정 자동 등록하기", type="primary", use_container_width=True) and excel_file:
