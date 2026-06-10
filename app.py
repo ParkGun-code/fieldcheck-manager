@@ -19,14 +19,7 @@ load_dotenv()
 os.environ['GRPC_DNS_RESOLVER'] = 'native'
 
 import streamlit as st
-import streamlit.components.v1 as components
-import fitz  # PyMuPDF
-import pytesseract
-from PIL import Image
-from google import genai
 import pandas as pd
-import html as html_lib
-from textwrap import dedent
 
 # ==========================================
 # 🛑 HWP -> PDF 변환용 라이브러리 (윈도우 전용)
@@ -72,27 +65,25 @@ st.set_page_config(page_title="현장점검 통합관리 시스템", page_icon="
 
 SHARED_USER_ID = os.environ.get("ADMIN_ID", st.secrets.get("ADMIN_ID", "molitdj_default"))
 SHARED_PASSWORD = os.environ.get("ADMIN_PW", st.secrets.get("ADMIN_PW", "change_me!"))
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", st.secrets.get("GEMINI_API_KEY", ""))
 
-tesseract_path = os.environ.get("TESSERACT_CMD_PATH", r'C:\Program Files\Tesseract-OCR\tesseract.exe')
-pytesseract.pytesseract.tesseract_cmd = tesseract_path
+# AI 요약 기능용 라이브러리 로드 시도
+try:
+    from google import genai
+    GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", st.secrets.get("GEMINI_API_KEY", ""))
+except ImportError:
+    GEMINI_API_KEY = ""
 
 DB_FILENAME = "penalty_database.csv"
 ATTACH_DIR = "attachments"
-
 ITEMS_PER_PAGE = 10 
 
 if not os.path.exists(ATTACH_DIR):
     os.makedirs(ATTACH_DIR)
 
 PENALTY_INTERVALS = [
-    (30, "확인서 이의제기 접수"),
-    (14, "확인서 이의제기 의견 통보"),
-    (14, "벌점 사전부과 통보"),
-    (15, "벌점 사전부과 통보 의견제출 마감"), 
-    (15, "벌점 사전부과 의견 검토회의"), 
-    (1, "벌점 사전부과 의견 검토회의 결과 통보 및 벌점 부과"),
-    (30, "벌점 부과 이의제기 접수"), 
+    (30, "확인서 이의제기 접수"), (14, "확인서 이의제기 의견 통보"), (14, "벌점 사전부과 통보"),
+    (15, "벌점 사전부과 통보 의견제출 마감"), (15, "벌점 사전부과 의견 검토회의"), 
+    (1, "벌점 사전부과 의견 검토회의 결과 통보 및 벌점 부과"), (30, "벌점 부과 이의제기 접수"), 
     (40, "벌점 심의위원회 개최 및 최종 결과 통보")
 ]
 
@@ -117,9 +108,11 @@ def atomic_save_csv(filename: str, headers: List[str], rows: List[List[Any]]) ->
             os.remove(temp_filename)
 
 # ==========================================
-# 🖱️ 2. 새창(다이얼로그) 마우스 드래그 기능 주입
+# 🖱️ 2. 새창(다이얼로그) 기능
 # ==========================================
+# (드래그 기능은 다이얼로그 내부 요소이므로 CSS 충돌이 없도록 기존 JS 유지)
 def make_dialog_draggable():
+    import streamlit.components.v1 as components
     drag_js = """
     <script>
     const doc = window.parent.document;
@@ -130,89 +123,45 @@ def make_dialog_draggable():
             if (header && !dialog.dataset.dragEnabled) {
                 dialog.dataset.dragEnabled = 'true';
                 header.style.cursor = 'grab';
-                let isDragging = false;
-                let startX, startY;
-                let currentX = 0;
-                let currentY = 0;
+                let isDragging = false; let startX, startY; let currentX = 0; let currentY = 0;
                 dialog.style.position = 'relative';
-
-                header.addEventListener('mousedown', (e) => {
-                    isDragging = true;
-                    header.style.cursor = 'grabbing';
-                    startX = e.clientX;
-                    startY = e.clientY;
-                    doc.body.style.userSelect = 'none';
-                });
-
-                doc.addEventListener('mousemove', (e) => {
-                    if (!isDragging) return;
-                    const dx = e.clientX - startX;
-                    const dy = e.clientY - startY;
-                    currentX += dx;
-                    currentY += dy;
-                    dialog.style.left = currentX + 'px';
-                    dialog.style.top = currentY + 'px';
-                    startX = e.clientX;
-                    startY = e.clientY;
-                });
-
-                const stopDrag = () => {
-                    if (isDragging) {
-                        isDragging = false;
-                        header.style.cursor = 'grab';
-                        doc.body.style.userSelect = '';
-                    }
-                };
-                doc.addEventListener('mouseup', stopDrag);
-                doc.addEventListener('mouseleave', stopDrag);
+                header.addEventListener('mousedown', (e) => { isDragging = true; header.style.cursor = 'grabbing'; startX = e.clientX; startY = e.clientY; doc.body.style.userSelect = 'none'; });
+                doc.addEventListener('mousemove', (e) => { if (!isDragging) return; const dx = e.clientX - startX; const dy = e.clientY - startY; currentX += dx; currentY += dy; dialog.style.left = currentX + 'px'; dialog.style.top = currentY + 'px'; startX = e.clientX; startY = e.clientY; });
+                const stopDrag = () => { if (isDragging) { isDragging = false; header.style.cursor = 'grab'; doc.body.style.userSelect = ''; } };
+                doc.addEventListener('mouseup', stopDrag); doc.addEventListener('mouseleave', stopDrag);
             }
         });
     };
-    const observer = new MutationObserver(setupDrag);
-    observer.observe(doc.body, { childList: true, subtree: true });
-    setTimeout(setupDrag, 100);
+    const observer = new MutationObserver(setupDrag); observer.observe(doc.body, { childList: true, subtree: true }); setTimeout(setupDrag, 100);
     </script>
     """
     components.html(drag_js, height=0, width=0)
 
-# ==========================================
-# 🔐 3. 새창(다이얼로그) 팝업 UI 구현
-# ==========================================
 @st.dialog("✨ AI 심의안건 보고서 작성 (새창)", width="large")
 def show_summary_dialog(file_path, file_name):
     make_dialog_draggable() 
     st.markdown(f"### 📄 [{file_name}] 분석 결과")
-    
     if not GEMINI_API_KEY:
-        st.error("⚠️ 시스템에 AI API 키가 설정되어 있지 않습니다. 관리자에게 문의하세요.")
+        st.error("⚠️ 시스템에 AI API 키가 설정되어 있지 않습니다.")
         return
-
     with st.spinner("AI가 공무원 양식으로 보고서를 작성 중입니다..."):
         st.write_stream(get_ai_summary_stream(file_path))
-    if st.button("닫기", type="primary"):
-        st.rerun()
+    if st.button("닫기", type="primary"): st.rerun()
 
 @st.dialog("📄 첨부 문서 뷰어 (새창)", width="large")
 def show_file_dialog(file_path, file_name):
     make_dialog_draggable() 
     st.markdown(f"### 📎 {file_name}")
     ext = os.path.splitext(file_path)[1].lower()
-    
     try: 
-        if ext in ['.png', '.jpg', '.jpeg']:
-            st.image(file_path, use_column_width=True)
+        if ext in ['.png', '.jpg', '.jpeg']: st.image(file_path, use_column_width=True)
         elif ext == '.pdf':
-            with open(file_path, "rb") as f:
-                base64_pdf = base64.b64encode(f.read()).decode('utf-8')
-            pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="700" type="application/pdf"></iframe>'
-            st.markdown(pdf_display, unsafe_allow_html=True)
+            with open(file_path, "rb") as f: base64_pdf = base64.b64encode(f.read()).decode('utf-8')
+            st.markdown(f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="700" type="application/pdf"></iframe>', unsafe_allow_html=True)
         elif ext == '.txt':
-            with open(file_path, "r", encoding="utf-8") as f:
-                st.text_area("문서 내용", f.read(), height=500)
-        else:
-            st.warning("⚠️ 웹 미리보기를 지원하지 않는 형식입니다. 리스트의 체크박스를 통해 다운로드해 주세요.")
-    except Exception as e:
-        st.error(f"문서를 불러오는 중 오류가 발생했습니다: {e}")
+            with open(file_path, "r", encoding="utf-8") as f: st.text_area("문서 내용", f.read(), height=500)
+        else: st.warning("⚠️ 지원하지 않는 형식입니다. 체크박스를 통해 다운로드해 주세요.")
+    except Exception as e: st.error(f"오류가 발생했습니다: {e}")
 
 # ==========================================
 # 📌 현장 상세정보 공통 처리
@@ -250,77 +199,51 @@ DB_COLUMNS = (
 )
 
 def clean_cell(value: Any) -> str:
-    if value is None:
-        return ""
+    if value is None: return ""
     try:
-        if pd.isna(value):
-            return ""
-    except Exception:
-        pass
-    if isinstance(value, pd.Timestamp):
-        return value.strftime('%Y-%m-%d')
-    if isinstance(value, datetime):
-        return value.strftime('%Y-%m-%d')
-    if isinstance(value, date):
+        if pd.isna(value): return ""
+    except Exception: pass
+    if isinstance(value, pd.Timestamp) or isinstance(value, datetime) or isinstance(value, date):
         return value.strftime('%Y-%m-%d')
     value_str = str(value).strip()
-    if value_str.lower() in ["nan", "nat", "none", "null"]:
-        return ""
+    if value_str.lower() in ["nan", "nat", "none", "null"]: return ""
     return value_str
 
-def normalize_column_name(value: Any) -> str:
-    return re.sub(r"\s+", "", str(value).replace("\n", "")).lower()
+def normalize_column_name(value: Any) -> str: return re.sub(r"\s+", "", str(value).replace("\n", "")).lower()
 
 def get_row_value(row: pd.Series, aliases: List[str]) -> str:
     normalized_row = {normalize_column_name(col): val for col, val in row.items()}
     for alias in aliases:
-        value = normalized_row.get(normalize_column_name(alias), "")
-        cleaned = clean_cell(value)
-        if cleaned:
-            return cleaned
+        cleaned = clean_cell(normalized_row.get(normalize_column_name(alias), ""))
+        if cleaned: return cleaned
     return ""
 
 def parse_date_value(value: Any, default_year: Optional[int] = None) -> Optional[date]:
-    if value is None:
-        return None
+    if value is None: return None
     try:
-        if pd.isna(value):
-            return None
-    except Exception:
-        pass
-    if isinstance(value, pd.Timestamp):
-        return value.date()
-    if isinstance(value, datetime):
-        return value.date()
-    if isinstance(value, date):
-        return value
+        if pd.isna(value): return None
+    except Exception: pass
+    if isinstance(value, pd.Timestamp) or isinstance(value, datetime): return value.date()
+    if isinstance(value, date): return value
 
     value_str = clean_cell(value)
-    if not value_str:
-        return None
-
+    if not value_str: return None
     numbers = re.findall(r"\d+", value_str)
     try:
         if len(numbers) >= 3:
             year = int(numbers[0])
-            if year < 100:
-                year += 2000
+            if year < 100: year += 2000
             return date(year, int(numbers[1]), int(numbers[2]))
         if len(numbers) >= 2:
-            year = default_year or date.today().year
-            return date(year, int(numbers[0]), int(numbers[1]))
-    except Exception as e: 
-        print(f"Date parse error: {e}")
-        return None
+            return date(default_year or date.today().year, int(numbers[0]), int(numbers[1]))
+    except Exception: return None
     return None
 
 def infer_inspection_period(file_name: str = "", row: Optional[pd.Series] = None, plan_date: Optional[date] = None, desc: str = "") -> str:
     candidates = []
     if row is not None:
-        try:
-            candidates.append(get_row_value(row, ["점검시기", "점검 시기", "점검구분", "점검 구분", "점검유형", "점검 유형", "점검명"]))
-        except Exception:
-            pass
+        try: candidates.append(get_row_value(row, ["점검시기", "점검 시기", "점검구분", "점검 구분", "점검유형", "점검 유형", "점검명"]))
+        except Exception: pass
     candidates.extend([file_name, desc])
     source = " ".join(clean_cell(v) for v in candidates if clean_cell(v))
 
@@ -328,33 +251,25 @@ def infer_inspection_period(file_name: str = "", row: Optional[pd.Series] = None
     if "우기" in source: return "우기대비 점검"
     if "동절" in source or "겨울" in source: return "동절기 점검"
     if "상시" in source or "월점검" in source or "월 점검" in source:
-        if plan_date:
-            return f"{plan_date.month}월 상시점검"
-        return "상시점검"
+        return f"{plan_date.month}월 상시점검" if plan_date else "상시점검"
 
     month_match = re.search(r"(1[0-2]|[1-9])\s*월", source)
-    if month_match:
-        return f"{int(month_match.group(1))}월 상시점검"
-
+    if month_match: return f"{int(month_match.group(1))}월 상시점검"
     return "기타"
 
 def selectbox_options_with_current(current_value: str) -> List[str]:
     current_value = clean_cell(current_value)
     options = INSPECTION_PERIOD_OPTIONS.copy()
-    if current_value and current_value not in options:
-        options.insert(0, current_value)
+    if current_value and current_value not in options: options.insert(0, current_value)
     return options
 
 def extract_team_from_desc(desc: str) -> str:
-    desc = clean_cell(desc)
-    match = re.search(r"\[([^\]]*조)\]", desc)
+    match = re.search(r"\[([^\]]*조)\]", clean_cell(desc))
     return match.group(1).strip() if match else ""
 
 def strip_wrapping_brackets(value: str) -> str:
     value = clean_cell(value)
-    if value.startswith("[") and value.endswith("]"):
-        return value[1:-1].strip()
-    return value
+    return value[1:-1].strip() if value.startswith("[") and value.endswith("]") else value
 
 def normalize_inspection_period_label(period: str) -> str:
     period = strip_wrapping_brackets(period)
@@ -362,57 +277,36 @@ def normalize_inspection_period_label(period: str) -> str:
     if "우기" in period: return "우기"
     if "해빙" in period: return "해빙기"
     if "동절" in period or "겨울" in period: return "동절기"
-    
     month_match = re.search(r"(1[0-2]|[1-9])\s*월", period)
     if month_match and "상시" in period: return f"{int(month_match.group(1))}월 상시"
     if "상시" in period: return "상시"
-
     return period.replace(" 점검", "").replace("점검", "").strip()
 
 def truncate_label(label: str, max_chars: int = 34) -> str:
     label = clean_cell(label)
-    if max_chars and len(label) > max_chars:
-        return label[:max_chars - 3].rstrip() + "..."
-    return label
+    return label[:max_chars - 3].rstrip() + "..." if max_chars and len(label) > max_chars else label
 
 def make_calendar_event_label(site: str, step: dict) -> str:
     desc = clean_cell(step.get("desc", ""))
     period = clean_cell(step.get("inspection_period", "")) or infer_inspection_period(plan_date=step.get("date"), desc=desc)
     team = clean_cell(step.get("team", "")) or extract_team_from_desc(desc)
-
-    period_label = normalize_inspection_period_label(period)
-    team_label = strip_wrapping_brackets(team)
-
     prefix = ""
-    if period_label: prefix += f"[{period_label}]"
-    if team_label: prefix += f"[{team_label}]"
-
+    if normalize_inspection_period_label(period): prefix += f"[{normalize_inspection_period_label(period)}]"
+    if strip_wrapping_brackets(team): prefix += f"[{strip_wrapping_brackets(team)}]"
     return f"{prefix}{clean_cell(site)}" if prefix else clean_cell(site)
 
 def get_representative_step_for_site(steps: List[dict]) -> dict:
     if not steps: return {}
-    today = date.today()
     dated_steps = [step for step in steps if step.get("date")]
     if not dated_steps: return steps[0]
-
-    upcoming_steps = [step for step in dated_steps if step.get("date") >= today]
-    if upcoming_steps:
-        return min(upcoming_steps, key=lambda step: step.get("date"))
-    return max(dated_steps, key=lambda step: step.get("date"))
+    upcoming = [step for step in dated_steps if step.get("date") >= date.today()]
+    return min(upcoming, key=lambda x: x.get("date")) if upcoming else max(dated_steps, key=lambda x: x.get("date"))
 
 def make_site_list_label(site: str, site_data: dict, max_chars: int = 34) -> str:
     if site == "전체 현장": return site
-    step = get_representative_step_for_site(site_data.get(site, []))
-    return truncate_label(make_calendar_event_label(site, step), max_chars=max_chars)
+    return truncate_label(make_calendar_event_label(site, get_representative_step_for_site(site_data.get(site, []))), max_chars=max_chars)
 
-TEAM_PASTEL_COLORS = [
-    "#E3F2FD", "#E8F5E9", "#FFF3E0", "#F3E5F5", 
-    "#FCE4EC", "#E0F7FA", "#FFFDE7", "#ECEFF1",
-]
-
-def normalize_team_for_sort(team_value: str) -> str:
-    team_value = strip_wrapping_brackets(team_value)
-    return re.sub(r"\s+", "", team_value).upper()
+def normalize_team_for_sort(team_value: str) -> str: return re.sub(r"\s+", "", strip_wrapping_brackets(team_value)).upper()
 
 def get_team_sort_rank(team_value: str) -> int:
     normalized = normalize_team_for_sort(team_value)
@@ -421,61 +315,36 @@ def get_team_sort_rank(team_value: str) -> int:
     plain_match = re.search(r"^(?:제)?0*([1-3])조?$", normalized)
     if plain_match: return int(plain_match.group(1))
     number_match = re.search(r"(\d+)", normalized)
-    if number_match: return 100 + int(number_match.group(1))
-    return 999
+    return 100 + int(number_match.group(1)) if number_match else 999
 
-def get_step_team_value(step: dict) -> str:
-    return clean_cell(step.get("team", "")) or extract_team_from_desc(step.get("desc", ""))
+def get_step_team_value(step: dict) -> str: return clean_cell(step.get("team", "")) or extract_team_from_desc(step.get("desc", ""))
 
 def calendar_event_sort_key(event_tuple: tuple) -> tuple:
     site, step_idx, step = event_tuple
-    return (
-        get_team_sort_rank(get_step_team_value(step)),
-        normalize_team_for_sort(get_step_team_value(step)),
-        clean_cell(site),
-        step_idx,
-    )
-
-def clear_schedule_edit_query_params():
-    for key in ["edit_site", "edit_idx"]:
-        if key in st.query_params:
-            del st.query_params[key]
+    return (get_team_sort_rank(get_step_team_value(step)), normalize_team_for_sort(get_step_team_value(step)), clean_cell(site), step_idx)
 
 def get_site_detail_defaults(steps: List[dict]) -> dict:
     defaults = {key: "" for key, _, _ in SITE_DETAIL_FIELDS}
     for step in steps:
         for key, _, _ in SITE_DETAIL_FIELDS:
-            if not defaults[key] and clean_cell(step.get(key, "")):
-                defaults[key] = clean_cell(step.get(key, ""))
+            if not defaults[key] and clean_cell(step.get(key, "")): defaults[key] = clean_cell(step.get(key, ""))
     return defaults
 
 def apply_site_details_to_all_steps(site_name: str, detail_values: dict) -> None:
     for step in st.session_state.site_data.get(site_name, []):
-        for key, value in detail_values.items():
-            step[key] = value
+        for key, value in detail_values.items(): step[key] = value
 
 def get_construction_period_text(step: dict) -> str:
-    explicit_period = clean_cell(step.get("construction_period", ""))
-    if explicit_period: return explicit_period
-    period_start = clean_cell(step.get("construction_start", ""))
-    period_end = clean_cell(step.get("construction_end", ""))
-    if period_start or period_end: return f"{period_start or '-'} ~ {period_end or '-'}"
-    return ""
+    explicit = clean_cell(step.get("construction_period", ""))
+    if explicit: return explicit
+    start, end = clean_cell(step.get("construction_start", "")), clean_cell(step.get("construction_end", ""))
+    return f"{start or '-'} ~ {end or '-'}" if start or end else ""
 
 def format_site_detail_for_popup(step: dict) -> str:
     lines = [f"점검일정: {step.get('date').strftime('%Y-%m-%d') if step.get('date') else '-'}"]
     for label, value in [("점검시기", step.get("inspection_period", "")), ("담당조", step.get("team", "")), ("점검자", step.get("inspectors", ""))]:
         if clean_cell(value): lines.append(f"{label}: {clean_cell(value)}")
-
-    detail_pairs = [
-        ("현장사무실", step.get("site_office", "")), ("별도 우편 주소", step.get("postal_address", "")),
-        ("착공일~준공일", get_construction_period_text(step)), ("총공사비", step.get("total_cost", "")),
-        ("공정률", step.get("progress_rate", "")), ("시공사", step.get("builder", "")),
-        ("감리사", step.get("supervisor", "")), ("현장대리인", step.get("site_manager", "")),
-        ("현장대리인 전화번호", step.get("manager_phone", "")), ("현장대리인 이메일", step.get("manager_email", "")),
-        ("발주처", step.get("client", "")), ("공사진행상태", step.get("status", "")),
-    ]
-
+    detail_pairs = [("현장사무실", step.get("site_office", "")), ("별도 우편 주소", step.get("postal_address", "")), ("착공일~준공일", get_construction_period_text(step)), ("총공사비", step.get("total_cost", "")), ("공정률", step.get("progress_rate", "")), ("시공사", step.get("builder", "")), ("감리사", step.get("supervisor", "")), ("현장대리인", step.get("site_manager", "")), ("현장대리인 전화번호", step.get("manager_phone", "")), ("현장대리인 이메일", step.get("manager_email", "")), ("발주처", step.get("client", "")), ("공사진행상태", step.get("status", ""))]
     has_detail = False
     for label, value in detail_pairs:
         if clean_cell(value):
@@ -509,17 +378,12 @@ def render_site_detail_inputs(defaults: dict, key_prefix: str) -> dict:
 def show_schedule_edit_dialog(site_name: str, step_idx: int):
     make_dialog_draggable()
     try: step_idx = int(step_idx)
-    except ValueError:
-        st.error("수정할 일정 정보를 찾을 수 없습니다.")
-        return
-
+    except ValueError: return st.error("수정할 일정 정보를 찾을 수 없습니다.")
     if site_name not in st.session_state.site_data or step_idx < 0 or step_idx >= len(st.session_state.site_data[site_name]):
-        st.error("선택한 현장 또는 일정이 존재하지 않습니다.")
-        return
+        return st.error("선택한 현장 또는 일정이 존재하지 않습니다.")
 
     steps = st.session_state.site_data[site_name]
     step = steps[step_idx]
-
     st.markdown(f"### {site_name}")
     st.info(format_site_detail_for_popup(step))
 
@@ -539,9 +403,7 @@ def show_schedule_edit_dialog(site_name: str, step_idx: int):
         new_memo = st.text_area("메모", value=clean_cell(step.get("memo", "")), height=100)
 
         st.markdown("#### 현장 상세정보 수정")
-        defaults = get_site_detail_defaults(steps)
-        detail_values = render_site_detail_inputs(defaults, f"calendar_detail_{site_name}_{step_idx}")
-
+        detail_values = render_site_detail_inputs(get_site_detail_defaults(steps), f"calendar_detail_{site_name}_{step_idx}")
         save_btn, close_btn = st.columns(2)
         with save_btn: submitted = st.form_submit_button("변경사항 저장", type="primary", use_container_width=True)
         with close_btn: closed = st.form_submit_button("닫기", use_container_width=True)
@@ -557,208 +419,156 @@ def show_schedule_edit_dialog(site_name: str, step_idx: int):
 
     if closed: st.rerun()
 
-
 # ==========================================
-# 📅 4. Streamlit 네이티브 달력 렌더링 (모바일 반응형 완벽 보완)
+# 📅 4. Streamlit 네이티브 달력 렌더링 (순수 CSS 완벽 고정)
 # ==========================================
 def make_streamlit_key(*parts) -> str:
     raw = "_".join(clean_cell(part) for part in parts)
     return re.sub(r"[^0-9a-zA-Z가-힣_]+", "_", raw)[:180]
 
-def inject_calendar_button_style():
-    js_code = """
-    <script>
-    const doc = window.parent.document;
+def get_team_style_class(teamRaw: str) -> str:
+    """파이썬에서 직접 데이터 속성(class)을 결정하여 HTML에 주입"""
+    if not teamRaw: return "default"
+    team = normalize_team_for_sort(teamRaw)
+    if re.search(r"^TF0*1조?$", team): return "tf1"
+    if re.search(r"^TF0*2조?$", team): return "tf2"
+    plain = re.search(r"^(?:제)?0*([1-3])조?$", team)
+    if plain: return f"team{plain.group(1)}"
+    return "default"
+
+def inject_pure_css_calendar_style():
+    """자바스크립트를 완전히 배제하고 브라우저 네이티브 CSS(has 선택자)만 사용하여 레이아웃 붕괴 원천 차단"""
+    CSS = """
+    <style>
+    /* 달력 스크롤바 디자인 */
+    div[data-testid="column"]:has(.cal-cell-marker)::-webkit-scrollbar { width: 4px; height: 4px; }
+    div[data-testid="column"]:has(.cal-cell-marker)::-webkit-scrollbar-track { background: transparent; }
+    div[data-testid="column"]:has(.cal-cell-marker)::-webkit-scrollbar-thumb { background-color: #CBD5E1; border-radius: 10px; }
     
-    // 달력 내부 스크롤바 디자인 (얇고 심플하게)
-    if (!doc.getElementById('cal-custom-style')) {
-        const style = doc.createElement('style');
-        style.id = 'cal-custom-style';
-        style.innerHTML = `
-            ::-webkit-scrollbar { width: 4px; height: 4px; }
-            ::-webkit-scrollbar-track { background: transparent; }
-            ::-webkit-scrollbar-thumb { background-color: #CBD5E1; border-radius: 10px; }
-            
-            /* 📱 [모바일 대응 핵심] 화면이 좁아져도 7열(요일)이 세로로 무너지지 않도록 강제 가로 배치 */
-            div[data-testid="stHorizontalBlock"].cal-row,
-            div[data-testid="stHorizontalBlock"].cal-header-row {
-                display: flex !important;
-                flex-direction: row !important;
-                flex-wrap: nowrap !important;
-                min-width: 800px !important; /* 모바일에서 찌그러지지 않도록 최소 너비 강제 (넘치면 전체 화면 가로 스크롤 가능) */
-            }
-
-            /* 요일 헤더 및 날짜 셀의 크기가 좁아지지 않도록 폭 강제 고정 */
-            div[data-testid="column"].cal-header-col,
-            div[data-testid="column"].cal-scroll-col {
-                width: 14.285% !important;
-                flex: 1 1 0% !important;
-                min-width: 110px !important;
-            }
-        `;
-        doc.head.appendChild(style);
+    /* 📱 모바일 대응: 화면이 좁아져도 7열이 세로로 무너지지 않고 강제 가로 배치 유지 (스와이프 스크롤) */
+    div[data-testid="stHorizontalBlock"]:has(.cal-header-marker),
+    div[data-testid="stHorizontalBlock"]:has(.cal-cell-marker) {
+        display: flex !important;
+        flex-direction: row !important;
+        flex-wrap: nowrap !important;
+        min-width: 800px !important;
+        gap: 0 !important;
+        border-left: 1px solid #E5E7EB !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.cal-header-marker) {
+        border-top: 1px solid #E5E7EB !important;
     }
 
-    const colorMap = {
-        "1조": { bg: "#AEE4FF", text: "#1A202C" },
-        "2조": { bg: "#60B65C", text: "#FFFFFF" },
-        "3조": { bg: "#F99B62", text: "#FFFFFF" },
-        "TF1조": { bg: "#FFF2A8", text: "#1A202C" },
-        "TF2조": { bg: "transparent", text: "#7A5299", borderLeft: "3px solid #7A5299" },
-    };
-    const defaultStyle = { bg: "#E2E8F0", text: "#1A202C" };
-
-    function normalizeTeam(team) { return (team || '').replace(/\\s+/g, '').toUpperCase(); }
+    /* 요일 헤더 및 날짜 셀의 폭 강제 고정 */
+    div[data-testid="column"]:has(.cal-header-marker),
+    div[data-testid="column"]:has(.cal-cell-marker) {
+        width: 14.285% !important;
+        flex: 1 1 0% !important;
+        min-width: 110px !important;
+        border-right: 1px solid #E5E7EB !important;
+        border-bottom: 1px solid #E5E7EB !important;
+        padding: 4px !important;
+    }
     
-    function getStyle(teamRaw) {
-        const team = normalizeTeam(teamRaw);
-        if (/^TF0*1조?$/.test(team)) return colorMap["TF1조"];
-        if (/^TF0*2조?$/.test(team)) return colorMap["TF2조"];
-        const plain = team.match(/^(?:제)?0*([1-3])조?$/);
-        if (plain) return colorMap[plain[1] + "조"];
-        return defaultStyle;
+    /* 요일 헤더 셀 디자인 */
+    div[data-testid="column"]:has(.cal-header-marker) {
+        background-color: #F8FAFC !important;
+        padding: 8px 0 !important;
+        border-bottom: 2px solid #94A3B8 !important;
+    }
+    
+    /* 날짜 셀의 스크롤 고정 */
+    div[data-testid="column"]:has(.cal-cell-marker) {
+        height: 140px !important;
+        min-height: 140px !important;
+        max-height: 140px !important;
+        overflow-y: auto !important;
+        overflow-x: hidden !important;
     }
 
-    function applyCalendarStyles() {
-        try {
-            // 헤더 행 CSS 클래스 적용 (모바일 가로배치용)
-            const headers = doc.querySelectorAll('.cal-header');
-            headers.forEach(header => {
-                const colDiv = header.closest('div[data-testid="column"]');
-                if(colDiv && !colDiv.classList.contains('cal-header-col')) {
-                    colDiv.classList.add('cal-header-col');
-                    const rowDiv = colDiv.closest('div[data-testid="stHorizontalBlock"]');
-                    if(rowDiv && !rowDiv.classList.contains('cal-header-row')) {
-                        rowDiv.classList.add('cal-header-row');
-                    }
-                }
-            });
-
-            // 네이티브 st.container 의 기본 여백/테두리를 제거하고 캘린더 모양으로 병합
-            const cellMarkers = doc.querySelectorAll('.cal-cell-marker:not([data-styled="true"])');
-            cellMarkers.forEach(marker => {
-                marker.dataset.styled = 'true';
-                
-                // 날짜 행 CSS 클래스 적용 (모바일 가로배치용)
-                const colDivOuter = marker.closest('div[data-testid="column"]');
-                if(colDivOuter && !colDivOuter.classList.contains('cal-scroll-col')) {
-                    colDivOuter.classList.add('cal-scroll-col');
-                    const rowDiv = colDivOuter.closest('div[data-testid="stHorizontalBlock"]');
-                    if(rowDiv && !rowDiv.classList.contains('cal-row')) {
-                        rowDiv.classList.add('cal-row');
-                    }
-                }
-
-                // st.container(height=...) 로 생성된 블록을 찾음
-                const scrollWrapper = marker.closest('div[data-testid="stVerticalBlockBorderWrapper"]');
-                if (scrollWrapper) {
-                    scrollWrapper.style.border = '1px solid #E5E7EB'; // 얇은 격자 테두리
-                    scrollWrapper.style.borderRadius = '0px'; // 각진 모서리
-                    
-                    const innerBlock = scrollWrapper.querySelector('div[data-testid="stVerticalBlock"]');
-                    if (innerBlock) {
-                        innerBlock.style.padding = '2px 4px'; // 여백 최소화
-                        innerBlock.style.gap = '0px'; // 버튼 간격 최소화
-                    }
-                }
-            });
-
-            // 일정 버튼 스타일링
-            const markers = doc.querySelectorAll('.event-marker:not([data-processed="true"])');
-            markers.forEach(marker => {
-                marker.dataset.processed = 'true';
-                const elemContainer = marker.closest('.element-container');
-                if (!elemContainer) return;
-                
-                elemContainer.style.display = 'none'; 
-                
-                let nextElemContainer = elemContainer.nextElementSibling;
-                while (nextElemContainer && !nextElemContainer.querySelector('button')) {
-                    nextElemContainer = nextElemContainer.nextElementSibling;
-                }
-
-                if (!nextElemContainer) return;
-
-                nextElemContainer.style.marginBottom = '0px';
-                nextElemContainer.style.marginTop = '0px';
-
-                const btn = nextElemContainer.querySelector('button');
-                if (btn) {
-                    const teamRaw = marker.dataset.team;
-                    const style = getStyle(teamRaw);
-                    
-                    btn.style.setProperty('background-color', style.bg, 'important');
-                    btn.style.setProperty('color', style.text, 'important');
-                    btn.style.setProperty('border', 'none', 'important');
-                    if (style.borderLeft) {
-                        btn.style.setProperty('border-left', style.borderLeft, 'important');
-                    }
-                    btn.style.setProperty('border-radius', '0px', 'important'); 
-                    btn.style.setProperty('padding', '2px 4px', 'important');
-                    btn.style.setProperty('min-height', '22px', 'important'); 
-                    btn.style.setProperty('height', 'auto', 'important');
-                    btn.style.setProperty('margin', '1px 0', 'important'); 
-                    btn.style.setProperty('width', '100%', 'important');
-                    btn.style.setProperty('display', 'block', 'important');
-                    btn.style.setProperty('text-align', 'left', 'important');
-                    
-                    const p = btn.querySelector('p');
-                    if (p) {
-                        p.style.setProperty('font-size', '11.5px', 'important');
-                        p.style.setProperty('font-weight', '600', 'important');
-                        p.style.setProperty('color', style.text, 'important');
-                        p.style.setProperty('margin', '0', 'important');
-                        p.style.setProperty('white-space', 'nowrap', 'important');
-                        p.style.setProperty('overflow', 'hidden', 'important');
-                        p.style.setProperty('text-overflow', 'ellipsis', 'important');
-                    }
-                    
-                    btn.addEventListener('mouseenter', () => {
-                        btn.style.setProperty('filter', 'brightness(0.92)', 'important');
-                    });
-                    btn.addEventListener('mouseleave', () => {
-                        btn.style.setProperty('filter', 'none', 'important');
-                    });
-                }
-            });
-        } catch(e) { console.error("Grid Style application error", e); }
+    /* 스트림릿 기본 st.container 테두리 및 여백 무효화 */
+    div[data-testid="column"]:has(.cal-cell-marker) div.element-container {
+        margin-bottom: 0 !important;
+        margin-top: 0 !important;
+    }
+    div[data-testid="stVerticalBlockBorderWrapper"]:has(.cal-cell-marker) {
+        border: none !important;
+        border-radius: 0px !important;
+        padding: 0 !important;
+    }
+    div[data-testid="stVerticalBlockBorderWrapper"]:has(.cal-cell-marker) div[data-testid="stVerticalBlock"] {
+        padding: 0 !important;
+        gap: 0 !important;
     }
 
-    const observer = new MutationObserver(applyCalendarStyles);
-    observer.observe(doc.body, { childList: true, subtree: true });
-    applyCalendarStyles();
-    setTimeout(applyCalendarStyles, 500);
-    setTimeout(applyCalendarStyles, 1000); // 렌더링 지연에 대비해 한 번 더 실행
-    </script>
+    /* 식별용 마커 숨김 처리 */
+    .cal-header-marker, .cal-cell-marker, .event-marker {
+        display: none !important;
+    }
+
+    /* 공통 버튼 디자인 (Flat Design) */
+    div.element-container:has(div.event-marker) + div.element-container button {
+        border: none !important;
+        border-radius: 0px !important;
+        padding: 2px 4px !important;
+        min-height: 22px !important;
+        height: auto !important;
+        margin: 1px 0 !important;
+        width: 100% !important;
+        display: block !important;
+        text-align: left !important;
+        background-color: #E2E8F0 !important;
+        color: #1A202C !important;
+    }
+    div.element-container:has(div.event-marker) + div.element-container button p {
+        font-size: 11.5px !important;
+        font-weight: 600 !important;
+        margin: 0 !important;
+        white-space: nowrap !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+        color: inherit !important;
+    }
+    div.element-container:has(div.event-marker) + div.element-container button:hover {
+        filter: brightness(0.92) !important;
+        border-color: transparent !important;
+    }
+
+    /* 팀별 버튼 색상 매핑 (has 선택자 활용) */
+    div.element-container:has(div[data-team="team1"]) + div.element-container button { background-color: #AEE4FF !important; color: #1A202C !important; }
+    div.element-container:has(div[data-team="team2"]) + div.element-container button { background-color: #60B65C !important; color: #FFFFFF !important; }
+    div.element-container:has(div[data-team="team3"]) + div.element-container button { background-color: #F99B62 !important; color: #FFFFFF !important; }
+    div.element-container:has(div[data-team="tf1"]) + div.element-container button { background-color: #FFF2A8 !important; color: #1A202C !important; }
+    div.element-container:has(div[data-team="tf2"]) + div.element-container button { background-color: transparent !important; color: #7A5299 !important; border-left: 3px solid #7A5299 !important; }
+    </style>
     """
-    components.html(js_code, height=0, width=0)
+    st.markdown(CSS, unsafe_allow_html=True)
 
 def render_streamlit_calendar(site_data: dict, year: int, month: int, selected_site: Optional[str] = None):
     calendar.setfirstweekday(calendar.SUNDAY)
     cal = calendar.monthcalendar(year, month)
     
-    inject_calendar_button_style()
+    # 순수 CSS 주입
+    inject_pure_css_calendar_style()
 
-    # 달력 헤더 (구분선 포함)
+    # 달력 헤더 렌더링
     header_cols = st.columns(7)
     for col, day_name in zip(header_cols, ['일', '월', '화', '수', '목', '금', '토']):
         color = "#e53e3e" if day_name == '일' else "#4a5568"
         with col:
-            st.markdown(f"<div class='cal-header' style='text-align:center; font-size:13px; font-weight:bold; color:{color}; padding:6px; border-bottom: 2px solid #94A3B8;'>{day_name}</div>", unsafe_allow_html=True)
+            # cal-header-marker 를 삽입하여 CSS가 해당 열을 헤더로 인식하게 함
+            st.markdown(f"<div class='cal-header-marker'></div><div style='text-align:center; font-size:13px; font-weight:bold; color:{color}; padding:6px;'>{day_name}</div>", unsafe_allow_html=True)
 
-    # 캘린더 그리드 (고정 높이 컨테이너 활용)
+    # 캘린더 그리드 렌더링
     for week_idx, week in enumerate(cal):
         cols = st.columns(7)
         for col_idx, day in enumerate(week):
             with cols[col_idx]:
                 if day == 0:
-                    # 빈 날짜도 정확히 동일한 120px 높이 유지
                     with st.container(height=120):
                         st.markdown("<div class='cal-cell-marker'></div>", unsafe_allow_html=True)
                     continue
 
-                # 핵심: 스트림릿 네이티브 스크롤 컨테이너 적용. 
-                # 120px는 날짜 헤더 + 3개의 일정이 들어갈 수 있는 완벽한 크기입니다. 4개부터는 내부 스크롤 생성.
                 with st.container(height=120):
                     st.markdown("<div class='cal-cell-marker'></div>", unsafe_allow_html=True)
                     current_date = date(year, month, day)
@@ -774,8 +584,10 @@ def render_streamlit_calendar(site_data: dict, year: int, month: int, selected_s
 
                     day_events = []
                     for site, steps in site_data.items():
+                        # 특정 현장이 선택되었을 때 필터링
                         if selected_site and selected_site != "전체 현장" and site != selected_site: continue
                         for step_idx, step in enumerate(steps):
+                            # 정확히 일치하는 날짜에만 이벤트 추가
                             if step.get('date') == current_date:
                                 day_events.append((site, step_idx, step))
 
@@ -785,9 +597,10 @@ def render_streamlit_calendar(site_data: dict, year: int, month: int, selected_s
                     for event_no, (site, step_idx, step) in enumerate(day_events):
                         label = truncate_label(make_calendar_event_label(site, step), max_chars=28)
                         btn_key = make_streamlit_key("cal_btn", year, month, week_idx, col_idx, event_no, site, step_idx)
-                        team_val = get_step_team_value(step)
+                        style_class = get_team_style_class(get_step_team_value(step))
                         
-                        st.markdown(f"<div class='event-marker' data-team='{team_val}'></div>", unsafe_allow_html=True)
+                        # 이벤트 마커를 삽입하여 CSS가 바로 다음에 오는 st.button을 타겟팅하도록 함
+                        st.markdown(f"<div class='event-marker' data-team='{style_class}'></div>", unsafe_allow_html=True)
                         if st.button(label, key=btn_key, use_container_width=True):
                             show_schedule_edit_dialog(site, step_idx)
 
@@ -796,6 +609,7 @@ def render_streamlit_calendar(site_data: dict, year: int, month: int, selected_s
 # ==========================================
 def get_ai_summary_stream(file_path: str):
     yield "🔄 AI 분석 엔진을 초기화하는 중입니다...\n\n"
+    from google import genai
     client = genai.Client(api_key=GEMINI_API_KEY)
     ext = os.path.splitext(file_path)[1].lower()
     prompt = """당신은 관공서(국토관리청 등)의 벌점심의위원회 또는 현장점검 결과 보고서를 작성하는 전문 행정관입니다.
@@ -804,8 +618,7 @@ def get_ai_summary_stream(file_path: str):
     - 반드시 명조체 느낌의 정중하고 딱딱한 공문서 개조식 어투(~함, ~임)를 사용하십시오.
     - 문서에 없는 내용을 절대 임의로 지어내지 마십시오. 정보가 부족한 항목은 과감히 생략하십시오.
     """
-    uploaded_file = None
-    safe_filepath = None
+    uploaded_file = safe_filepath = None
     try:
         if ext in ['.pdf', '.png', '.jpg', '.jpeg', '.txt']:
             safe_filename = secure_filename(f"temp_ai_upload_{int(time.time())}{ext}") 
@@ -815,8 +628,7 @@ def get_ai_summary_stream(file_path: str):
             
             if ext == '.pdf':
                 yield "📄 PDF 문서를 스캔하고 있습니다. (약 5~10초 소요)...\n\n"
-                max_retries = 15 
-                retries = 0
+                max_retries, retries = 15, 0
                 while retries < max_retries:
                     file_info = client.files.get(name=uploaded_file.name)
                     if "ACTIVE" in str(file_info.state).upper(): break
@@ -825,13 +637,10 @@ def get_ai_summary_stream(file_path: str):
                         return
                     time.sleep(2)
                     retries += 1
-                if retries >= max_retries:
-                    yield "❌ PDF 분석 시간이 초과되었습니다."
-                    return
+                if retries >= max_retries: return yield "❌ PDF 분석 시간이 초과되었습니다."
                     
             yield "💡 스캔 완료! 보고서 작성을 시작합니다...\n\n---\n\n"
-            response_stream = client.models.generate_content_stream(model='gemini-2.5-flash', contents=[prompt, uploaded_file])
-            for chunk in response_stream:
+            for chunk in client.models.generate_content_stream(model='gemini-2.5-flash', contents=[prompt, uploaded_file]):
                 if chunk.text: yield chunk.text
         else:
             yield "⚠️ 스트림릿 환경에서는 PDF, TXT, 이미지 요약만 지원합니다."
@@ -841,15 +650,13 @@ def get_ai_summary_stream(file_path: str):
         try:
             if uploaded_file: client.files.delete(name=uploaded_file.name)
             if safe_filepath and os.path.exists(safe_filepath): os.remove(safe_filepath)
-        except Exception:
-            pass 
+        except Exception: pass 
 
 # ==========================================
 # 💾 6. 데이터 처리 (엑셀/CSV 파싱 포함)
 # ==========================================
 def check_password() -> bool:
     if st.session_state.get("logged_in"): return True
-
     st.markdown("## 🏛️ 현장점검 통합관리 시스템 Login")
     with st.form("login_form"):
         user_id = st.text_input("아이디")
@@ -858,8 +665,7 @@ def check_password() -> bool:
             if user_id == SHARED_USER_ID and password == SHARED_PASSWORD:
                 st.session_state["logged_in"] = True
                 st.rerun()
-            else:
-                st.error("아이디 또는 비밀번호가 일치하지 않습니다.")
+            else: st.error("아이디 또는 비밀번호가 일치하지 않습니다.")
     return False
 
 def adjust_weekend(date_obj: date) -> date:
@@ -875,33 +681,23 @@ def load_data() -> dict:
         with open(DB_FILENAME, 'r', encoding='utf-8-sig', newline='') as f:
             reader = csv.DictReader(f)
             if not reader.fieldnames: return site_data
-
             for row in reader:
-                name = clean_cell(row.get('현장명', ''))
-                date_str = clean_cell(row.get('날짜', ''))
-                desc = clean_cell(row.get('업무명', ''))
-                
+                name, date_str, desc = clean_cell(row.get('현장명', '')), clean_cell(row.get('날짜', '')), clean_cell(row.get('업무명', ''))
                 if not name or not date_str or not desc: continue
                 date_obj = parse_date_value(date_str)
                 if not date_obj: continue
-
                 files_str = clean_cell(row.get('파일경로', ''))
                 step = {
-                    "date": date_obj,
-                    "desc": desc,
-                    "memo": clean_cell(row.get('메모', '')),
+                    "date": date_obj, "desc": desc, "memo": clean_cell(row.get('메모', '')),
                     "files": files_str.split("|") if files_str else [],
                 }
                 for key, label, _ in STEP_EXTRA_FIELDS: step[key] = clean_cell(row.get(label, ''))
                 if not step.get("inspection_period"): step["inspection_period"] = infer_inspection_period(plan_date=date_obj, desc=desc)
                 if not step.get("team"): step["team"] = extract_team_from_desc(desc)
                 for key, label, _ in SITE_DETAIL_FIELDS: step[key] = clean_cell(row.get(label, ''))
-
                 site_data.setdefault(name, []).append(step)
-
         for name in site_data: site_data[name].sort(key=lambda x: x['date'])
-    except Exception as e:
-        st.error(f"데이터 로드 오류: {e}")
+    except Exception as e: st.error(f"데이터 로드 오류: {e}")
     return site_data
 
 def save_data(site_data: dict) -> None:
@@ -909,8 +705,7 @@ def save_data(site_data: dict) -> None:
     row_num = 1
     for name in sorted(site_data.keys()):
         for step in site_data[name]:
-            files_str = "|".join(step.get('files', []))
-            row = [row_num, name, step['date'].strftime('%Y-%m-%d'), step.get('desc', ''), step.get('memo', ''), files_str]
+            row = [row_num, name, step['date'].strftime('%Y-%m-%d'), step.get('desc', ''), step.get('memo', ''), "|".join(step.get('files', []))]
             for key, _, _ in STEP_EXTRA_FIELDS: row.append(step.get(key, ''))
             for key, _, _ in SITE_DETAIL_FIELDS: row.append(step.get(key, ''))
             rows.append(row)
@@ -922,8 +717,7 @@ def process_excel_schedule(file) -> None:
         if file.name.lower().endswith('.csv'):
             try: df = pd.read_csv(file, encoding='utf-8-sig', header=None)
             except Exception: df = pd.read_csv(file, encoding='cp949', header=None)
-        else:
-            df = pd.read_excel(file, header=None)
+        else: df = pd.read_excel(file, header=None)
 
         header_idx = -1
         for i, row in df.iterrows():
@@ -935,29 +729,23 @@ def process_excel_schedule(file) -> None:
             df.columns = df.iloc[header_idx]
             df = df.iloc[header_idx + 1:]
         else:
-            st.error("엑셀 파일 양식이 맞지 않습니다. '공사명' 및 '점검예정일' 열을 찾을 수 없습니다.")
-            return
+            return st.error("엑셀 파일 양식이 맞지 않습니다. '공사명' 및 '점검예정일' 열을 찾을 수 없습니다.")
 
-        success_count = updated_count = 0
-        default_year = date.today().year
+        success_count, updated_count, default_year = 0, 0, date.today().year
 
         for idx, row in df.iterrows():
             site_name = get_row_value(row, ["공사명", "현장명", "프로젝트명"])
             plan_date = parse_date_value(get_row_value(row, ["점검예정일", "점검 예정일", "점검일", "날짜"]), default_year)
             if not site_name or not plan_date: continue
 
-            team = get_row_value(row, ["담당조", "점검조", "조", "반"])
-            inspectors = get_row_value(row, ["점검자", "점검자명", "담당자"])
+            team, inspectors = get_row_value(row, ["담당조", "점검조", "조", "반"]), get_row_value(row, ["점검자", "점검자명", "담당자"])
             inspection_period = infer_inspection_period(file.name, row=row, plan_date=plan_date)
-            
             detail_values = {key: get_row_value(row, aliases) for key, _, aliases in SITE_DETAIL_FIELDS}
             desc = f"[{team}] {inspection_period}".strip() if team else inspection_period
 
-            memo_lines = []
-            if detail_values.get("client"): memo_lines.append(f"🏢 발주처: {detail_values['client']}")
-            if detail_values.get("builder"): memo_lines.append(f"👷 시공사: {detail_values['builder']}")
-            if detail_values.get("supervisor"): memo_lines.append(f"🔍 감리사: {detail_values['supervisor']}")
-            memo = "\n".join(memo_lines)
+            memo = "\n".join([f"🏢 발주처: {detail_values['client']}" if detail_values.get("client") else "",
+                              f"👷 시공사: {detail_values['builder']}" if detail_values.get("builder") else "",
+                              f"🔍 감리사: {detail_values['supervisor']}" if detail_values.get("supervisor") else ""]).strip()
 
             st.session_state.site_data.setdefault(site_name, [])
             existing_step = next((s for s in st.session_state.site_data[site_name] if s['date'] == plan_date and s['desc'] == desc), None)
@@ -972,13 +760,10 @@ def process_excel_schedule(file) -> None:
                 inherited_details = get_site_detail_defaults(st.session_state.site_data[site_name])
                 for k, v in detail_values.items():
                     if v: inherited_details[k] = v
-                
-                new_step = {
+                st.session_state.site_data[site_name].append({
                     "date": plan_date, "desc": desc, "memo": memo, "files": [],
-                    "inspection_period": inspection_period, "team": team, "inspectors": inspectors,
-                    **inherited_details,
-                }
-                st.session_state.site_data[site_name].append(new_step)
+                    "inspection_period": inspection_period, "team": team, "inspectors": inspectors, **inherited_details,
+                })
                 st.session_state.site_data[site_name].sort(key=lambda x: x['date'])
                 success_count += 1
 
@@ -987,7 +772,6 @@ def process_excel_schedule(file) -> None:
             st.success(f"신규 {success_count}건 등록, 기존 {updated_count}건 보강 완료")
             time.sleep(1)
             st.rerun()
-
     except Exception as e: st.error(f"엑셀 처리 중 오류 발생: {e}")
 
 # ==========================================
@@ -1003,33 +787,20 @@ def main():
     st.title("🏗️ 현장점검 통합관리 시스템")
 
     with st.sidebar:
-        # ⚠️ 데이터 유실 방지를 위한 백업 및 복구 전용 메뉴
         st.header("💾 데이터 백업 및 복구")
         st.info("⚠️ 클라우드 수면 모드로 인한 데이터 초기화 대비용입니다. 주기적으로 백업을 다운로드 해두세요.")
-        
-        # 백업 기능 (현재 DB파일을 다운로드)
         if os.path.exists(DB_FILENAME):
             with open(DB_FILENAME, "rb") as f:
-                st.download_button(
-                    label="⬇️ 현재 데이터 백업 (다운로드)",
-                    data=f,
-                    file_name=f"backup_{date.today().strftime('%Y%m%d')}.csv",
-                    mime="text/csv",
-                    use_container_width=True
-                )
-                
-        # 복구 기능 (업로드한 파일을 DB로 덮어쓰기)
+                st.download_button(label="⬇️ 현재 데이터 백업 (다운로드)", data=f, file_name=f"backup_{date.today().strftime('%Y%m%d')}.csv", mime="text/csv", use_container_width=True)
         backup_file = st.file_uploader("⬆️ 백업 파일 복구 (업로드)", type=['csv'], label_visibility="collapsed")
         if backup_file and st.button("🔄 시스템 복구 실행", use_container_width=True):
-            with open(DB_FILENAME, "wb") as f:
-                f.write(backup_file.getbuffer())
+            with open(DB_FILENAME, "wb") as f: f.write(backup_file.getbuffer())
             st.session_state.site_data = load_data()
             st.success("데이터가 성공적으로 복구되었습니다!")
             time.sleep(1)
             st.rerun()
             
         st.divider()
-
         st.header("📁 엑셀 일정 일괄 등록")
         excel_file = st.file_uploader("엑셀/CSV 파일 업로드", type=['csv', 'xlsx', 'xls'])
         if st.button("🚀 일정 자동 등록하기", type="primary", use_container_width=True) and excel_file:
@@ -1046,7 +817,6 @@ def main():
             with pp1: new_team = st.text_input("담당조", placeholder="예: 1조")
             with pp2: new_inspectors = st.text_input("점검자", placeholder="예: 홍길동, 김철수")
             new_detail_values = render_site_detail_inputs({}, "new_project_detail")
-
             if st.form_submit_button("초기 점검일정 생성") and new_site_name:
                 if new_site_name not in st.session_state.site_data:
                     st.session_state.site_data[new_site_name] = [{
@@ -1062,10 +832,8 @@ def main():
         search_query = st.text_input("🔍 현장명 검색")
         all_sites = sorted(list(st.session_state.site_data.keys()))
         site_options = ["전체 현장"] + [s for s in all_sites if search_query.lower() in s.lower()]
-            
         with st.container(height=300, border=True):
             selected_site = st.radio("일정을 볼 현장 선택", site_options, label_visibility="collapsed", format_func=lambda site: make_site_list_label(site, st.session_state.site_data))
-        
         if selected_site != "전체 현장" and st.button("🗑️ 현재 프로젝트 삭제", type="primary", use_container_width=True):
             del st.session_state.site_data[selected_site]
             save_data(st.session_state.site_data)
@@ -1083,6 +851,7 @@ def main():
             st.session_state.cal_month, st.session_state.cal_year = (1, st.session_state.cal_year + 1) if st.session_state.cal_month == 12 else (st.session_state.cal_month + 1, st.session_state.cal_year)
             st.rerun()
 
+    # ★ 캘린더 렌더링 호출
     render_streamlit_calendar(st.session_state.site_data, st.session_state.cal_year, st.session_state.cal_month, selected_site)
     st.divider()
 
@@ -1191,9 +960,7 @@ def main():
                         ext = file_name.lower().split('.')[-1]
                         chk_col, btn_col1, btn_col2, btn_col3 = st.columns([5, 2, 2, 2])
                         with chk_col:
-                            if st.checkbox(f"📎 {file_name}", key=f"chk_{actual_idx}_{file_path}"):
-                                checked_files_to_download.append(file_path)
-                        
+                            if st.checkbox(f"📎 {file_name}", key=f"chk_{actual_idx}_{file_path}"): checked_files_to_download.append(file_path)
                         if ext in ['pdf', 'png', 'jpg', 'jpeg', 'txt']:
                             with btn_col1:
                                 if st.button("👁️", key=f"v_{actual_idx}_{file_path}", help="보기"): show_file_dialog(file_path, file_name)
@@ -1202,7 +969,6 @@ def main():
                         else:
                             with btn_col1: st.write("")
                             with btn_col2: st.write("")
-                            
                         with btn_col3:
                             if st.button("🗑️ 삭제", key=f"delf_{actual_idx}_{file_path}", use_container_width=True):
                                 steps[actual_idx]['files'].remove(file_path)
@@ -1220,10 +986,7 @@ def main():
                             label=f"💾 체크된 파일 {len(checked_files_to_download)}개 다운로드 (.zip)",
                             data=zip_buffer.getvalue(),
                             file_name=f"첨부파일_다운로드_{date.today().strftime('%Y%m%d')}.zip",
-                            mime="application/zip",
-                            type="primary",
-                            use_container_width=True,
-                            key=f"zip_dl_{actual_idx}"
+                            mime="application/zip", type="primary", use_container_width=True, key=f"zip_dl_{actual_idx}"
                         )
 
 if __name__ == "__main__":
