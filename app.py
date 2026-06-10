@@ -71,7 +71,7 @@ try:
     from google import genai
     GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", st.secrets.get("GEMINI_API_KEY", ""))
 except ImportError:
-    GEMINI_API_KEY = "AIzaSyBRSKqPy-IVLqAqICwaJmli5YKifNcRdoA"
+    GEMINI_API_KEY = ""
 
 DB_FILENAME = "penalty_database.csv"
 ATTACH_DIR = "attachments"
@@ -146,21 +146,6 @@ def show_summary_dialog(file_path, file_name):
     with st.spinner("AI가 공무원 양식으로 보고서를 작성 중입니다..."):
         st.write_stream(get_ai_summary_stream(file_path))
     if st.button("닫기", type="primary"): st.rerun()
-
-@st.dialog("📄 첨부 문서 뷰어 (새창)", width="large")
-def show_file_dialog(file_path, file_name):
-    make_dialog_draggable() 
-    st.markdown(f"### 📎 {file_name}")
-    ext = os.path.splitext(file_path)[1].lower()
-    try: 
-        if ext in ['.png', '.jpg', '.jpeg']: st.image(file_path, use_column_width=True)
-        elif ext == '.pdf':
-            with open(file_path, "rb") as f: base64_pdf = base64.b64encode(f.read()).decode('utf-8')
-            st.markdown(f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="700" type="application/pdf"></iframe>', unsafe_allow_html=True)
-        elif ext == '.txt':
-            with open(file_path, "r", encoding="utf-8") as f: st.text_area("문서 내용", f.read(), height=500)
-        else: st.warning("⚠️ 지원하지 않는 형식입니다. 체크박스를 통해 다운로드해 주세요.")
-    except Exception as e: st.error(f"오류가 발생했습니다: {e}")
 
 # ==========================================
 # 📌 현장 상세정보 공통 처리
@@ -903,7 +888,7 @@ def main():
                         steps.sort(key=lambda x: x['date'])
                         save_data(st.session_state.site_data)
                         st.rerun()
-                    if st.button("❌ 삭제", key=f"del_{actual_idx}"):
+                    if st.button("❌ 일정 전체 삭제", key=f"del_{actual_idx}"):
                         steps.pop(actual_idx)
                         save_data(st.session_state.site_data)
                         st.rerun()
@@ -918,7 +903,6 @@ def main():
                     st.markdown("**📂 첨부 파일 (드래그 앤 드롭)**")
                     uploaded_files = st.file_uploader("업로드", accept_multiple_files=True, key=f"up_{actual_idx}", label_visibility="collapsed")
                     
-                    # 💡 [수정] 무한 새로고침(깜빡임) 방지를 위한 로직 변경
                     if uploaded_files:
                         files_changed = False
                         for uf in uploaded_files:
@@ -933,7 +917,6 @@ def main():
                                     if pdf_path != original_path and os.path.exists(pdf_path) and pdf_path not in steps[actual_idx]['files']:
                                         steps[actual_idx]['files'].append(pdf_path)
                         
-                        # 💡 [수정] 새로운 파일이 저장되었을 때만 데이터를 저장하고 화면을 새로고침합니다.
                         if files_changed:
                             save_data(st.session_state.site_data)
                             st.rerun()
@@ -947,22 +930,29 @@ def main():
                     for file_path in existing_files:
                         file_name = os.path.basename(file_path)
                         ext = file_name.lower().split('.')[-1]
-                        chk_col, btn_col1, btn_col2, btn_col3 = st.columns([5, 2, 2, 2])
+                        
+                        # 💡 [수정] 글씨가 잘 보이도록 버튼 칸 비율 넓게 조정 (4.5 : 2.5 : 2.5 : 2.5 비율)
+                        chk_col, btn_col1, btn_col2, btn_col3 = st.columns([4.5, 2.5, 2.5, 2.5])
+                        
                         with chk_col:
                             if st.checkbox(f"📎 {file_name}", key=f"chk_{actual_idx}_{file_path}"):
                                 checked_files_to_download.append(file_path)
                         
+                        # 💡 [수정] 팝업 뷰어 대신 다운로드 버튼으로 변경하여 로컬 전용 앱으로 열리도록 유도
+                        with btn_col1:
+                            with open(file_path, "rb") as f:
+                                st.download_button(label="파일보기", data=f, file_name=file_name, use_container_width=True, key=f"v_{actual_idx}_{file_path}")
+                        
+                        # 💡 [수정] 아이콘 제거 및 텍스트 적용
                         if ext in ['pdf', 'png', 'jpg', 'jpeg', 'txt']:
-                            with btn_col1:
-                                if st.button("👁️", key=f"v_{actual_idx}_{file_path}", help="보기"): show_file_dialog(file_path, file_name)
                             with btn_col2:
-                                if st.button("✨", key=f"ai_{actual_idx}_{file_path}", help="요약"): show_summary_dialog(file_path, file_name)
+                                if st.button("AI요약", key=f"ai_{actual_idx}_{file_path}", use_container_width=True):
+                                    show_summary_dialog(file_path, file_name)
                         else:
-                            with btn_col1: st.write("")
                             with btn_col2: st.write("")
                             
                         with btn_col3:
-                            if st.button("🗑️ 삭제", key=f"delf_{actual_idx}_{file_path}", use_container_width=True):
+                            if st.button("삭제", key=f"delf_{actual_idx}_{file_path}", use_container_width=True):
                                 steps[actual_idx]['files'].remove(file_path)
                                 try: os.remove(file_path) 
                                 except: pass
@@ -975,7 +965,7 @@ def main():
                         with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
                             for fpath in checked_files_to_download: zip_file.write(fpath, arcname=os.path.basename(fpath))
                         st.download_button(
-                            label=f"💾 체크된 파일 {len(checked_files_to_download)}개 다운로드 (.zip)",
+                            label=f"💾 체크된 파일 {len(checked_files_to_download)}개 전체 다운로드 (.zip)",
                             data=zip_buffer.getvalue(),
                             file_name=f"첨부파일_다운로드_{date.today().strftime('%Y%m%d')}.zip",
                             mime="application/zip",
