@@ -268,10 +268,8 @@ def clean_cell(value: Any) -> str:
         return ""
     return value_str
 
-
 def normalize_column_name(value: Any) -> str:
     return re.sub(r"\s+", "", str(value).replace("\n", "")).lower()
-
 
 def get_row_value(row: pd.Series, aliases: List[str]) -> str:
     normalized_row = {normalize_column_name(col): val for col, val in row.items()}
@@ -281,7 +279,6 @@ def get_row_value(row: pd.Series, aliases: List[str]) -> str:
         if cleaned:
             return cleaned
     return ""
-
 
 def parse_date_value(value: Any, default_year: Optional[int] = None) -> Optional[date]:
     if value is None:
@@ -317,7 +314,6 @@ def parse_date_value(value: Any, default_year: Optional[int] = None) -> Optional
         return None
     return None
 
-
 def infer_inspection_period(file_name: str = "", row: Optional[pd.Series] = None, plan_date: Optional[date] = None, desc: str = "") -> str:
     candidates = []
     if row is not None:
@@ -342,7 +338,6 @@ def infer_inspection_period(file_name: str = "", row: Optional[pd.Series] = None
 
     return "기타"
 
-
 def selectbox_options_with_current(current_value: str) -> List[str]:
     current_value = clean_cell(current_value)
     options = INSPECTION_PERIOD_OPTIONS.copy()
@@ -350,19 +345,16 @@ def selectbox_options_with_current(current_value: str) -> List[str]:
         options.insert(0, current_value)
     return options
 
-
 def extract_team_from_desc(desc: str) -> str:
     desc = clean_cell(desc)
     match = re.search(r"\[([^\]]*조)\]", desc)
     return match.group(1).strip() if match else ""
-
 
 def strip_wrapping_brackets(value: str) -> str:
     value = clean_cell(value)
     if value.startswith("[") and value.endswith("]"):
         return value[1:-1].strip()
     return value
-
 
 def normalize_inspection_period_label(period: str) -> str:
     period = strip_wrapping_brackets(period)
@@ -377,13 +369,11 @@ def normalize_inspection_period_label(period: str) -> str:
 
     return period.replace(" 점검", "").replace("점검", "").strip()
 
-
 def truncate_label(label: str, max_chars: int = 34) -> str:
     label = clean_cell(label)
     if max_chars and len(label) > max_chars:
         return label[:max_chars - 3].rstrip() + "..."
     return label
-
 
 def make_calendar_event_label(site: str, step: dict) -> str:
     desc = clean_cell(step.get("desc", ""))
@@ -399,7 +389,6 @@ def make_calendar_event_label(site: str, step: dict) -> str:
 
     return f"{prefix}{clean_cell(site)}" if prefix else clean_cell(site)
 
-
 def get_representative_step_for_site(steps: List[dict]) -> dict:
     if not steps: return {}
     today = date.today()
@@ -411,12 +400,10 @@ def get_representative_step_for_site(steps: List[dict]) -> dict:
         return min(upcoming_steps, key=lambda step: step.get("date"))
     return max(dated_steps, key=lambda step: step.get("date"))
 
-
 def make_site_list_label(site: str, site_data: dict, max_chars: int = 34) -> str:
     if site == "전체 현장": return site
     step = get_representative_step_for_site(site_data.get(site, []))
     return truncate_label(make_calendar_event_label(site, step), max_chars=max_chars)
-
 
 TEAM_PASTEL_COLORS = [
     "#E3F2FD", "#E8F5E9", "#FFF3E0", "#F3E5F5", 
@@ -453,7 +440,6 @@ def clear_schedule_edit_query_params():
     for key in ["edit_site", "edit_idx"]:
         if key in st.query_params:
             del st.query_params[key]
-
 
 def get_site_detail_defaults(steps: List[dict]) -> dict:
     defaults = {key: "" for key, _, _ in SITE_DETAIL_FIELDS}
@@ -498,7 +484,6 @@ def format_site_detail_for_popup(step: dict) -> str:
     if not has_detail: lines.append("등록된 현장 상세정보가 없습니다.")
     return "\n".join(lines)
 
-
 def render_site_detail_inputs(defaults: dict, key_prefix: str) -> dict:
     detail_values = {}
     d1, d2 = st.columns(2)
@@ -519,7 +504,6 @@ def render_site_detail_inputs(defaults: dict, key_prefix: str) -> dict:
         detail_values["client"] = st.text_input("발주처", value=defaults.get("client", ""), key=f"{key_prefix}_client")
         detail_values["status"] = st.text_input("공사진행상태", value=defaults.get("status", ""), key=f"{key_prefix}_status")
     return detail_values
-
 
 @st.dialog("🛠️ 현장정보 및 점검일정 수정", width="large")
 def show_schedule_edit_dialog(site_name: str, step_idx: int):
@@ -573,9 +557,8 @@ def show_schedule_edit_dialog(site_name: str, step_idx: int):
 
     if closed: st.rerun()
 
-
 # ==========================================
-# 📅 4. Streamlit 네이티브 달력 렌더링 함수 (스크롤 및 구분선 수정됨)
+# 📅 4. Streamlit 네이티브 달력 렌더링 함수 (스크롤 고정 및 구분선 추가)
 # ==========================================
 def make_streamlit_key(*parts) -> str:
     raw = "_".join(clean_cell(part) for part in parts)
@@ -586,7 +569,7 @@ def inject_calendar_button_style():
     <script>
     const doc = window.parent.document;
     
-    // 스트림릿 내장 스크롤바 커스터마이징 (디자인 해치지 않게 얇게 처리)
+    // 1. 고정 높이 140px 및 스크롤바 디자인을 위한 CSS 주입
     if (!doc.getElementById('cal-custom-style')) {
         const style = doc.createElement('style');
         style.id = 'cal-custom-style';
@@ -594,6 +577,44 @@ def inject_calendar_button_style():
             .cal-scrollable::-webkit-scrollbar { width: 5px; }
             .cal-scrollable::-webkit-scrollbar-track { background: transparent; }
             .cal-scrollable::-webkit-scrollbar-thumb { background-color: #CBD5E1; border-radius: 10px; }
+            
+            /* 모든 달력 셀을 140px로 고정하고 오버플로우 시 스크롤 적용 */
+            div[data-testid="column"].cal-scroll-col {
+                height: 140px !important;
+                min-height: 140px !important;
+                max-height: 140px !important;
+                overflow-y: auto !important;
+                overflow-x: hidden !important;
+                padding: 4px !important;
+                border-right: 1px solid #E5E7EB !important;
+                border-bottom: 1px solid #E5E7EB !important;
+            }
+            
+            /* Streamlit 기본 마진을 제거하여 버튼이 빈틈없이 위로 붙도록 설정 */
+            div[data-testid="column"].cal-scroll-col div.element-container {
+                margin-bottom: 0 !important;
+                margin-top: 0 !important;
+            }
+
+            /* 요일 헤더 셀 디자인 및 아래 구분선 */
+            div[data-testid="column"].cal-header-col {
+                padding: 8px 0 !important;
+                border-bottom: 2px solid #94A3B8 !important;
+                border-right: 1px solid #E5E7EB !important;
+                background-color: #F8FAFC !important;
+            }
+            
+            /* Flex layout 갭 제거 */
+            div[data-testid="stHorizontalBlock"].cal-row {
+                gap: 0 !important;
+                border-left: 1px solid #E5E7EB !important;
+            }
+            
+            div[data-testid="stHorizontalBlock"].cal-header-row {
+                gap: 0 !important;
+                border-left: 1px solid #E5E7EB !important;
+                border-top: 1px solid #E5E7EB !important;
+            }
         `;
         doc.head.appendChild(style);
     }
@@ -620,45 +641,41 @@ def inject_calendar_button_style():
 
     function applyCalendarStyles() {
         try {
-            const calStarts = doc.querySelectorAll('.cal-cell-empty, .cal-day-num, .cal-header');
-            calStarts.forEach(el => {
-                const colDiv = el.closest('div[data-testid="column"]');
-                if (colDiv && colDiv.dataset.gridStyled !== 'true') {
-                    colDiv.dataset.gridStyled = 'true';
-                    colDiv.style.borderRight = '1px solid #E5E7EB';
-                    colDiv.style.borderBottom = '1px solid #E5E7EB';
-                    colDiv.style.padding = '0 0 4px 0'; 
-                    
-                    if (!el.classList.contains('cal-header')) {
-                        // 스크롤 기능 강제 주입
-                        colDiv.classList.add('cal-scrollable');
-                        colDiv.style.minHeight = '140px';
-                        colDiv.style.maxHeight = '140px';
-                        colDiv.style.overflowY = 'auto'; // 일정이 많을 경우 스크롤 생성
-                    } else {
-                        colDiv.style.borderTop = '1px solid #E5E7EB';
-                        colDiv.style.backgroundColor = '#F9FAFB';
-                    }
-                    
-                    colDiv.style.width = '14.285%';
-                    colDiv.style.flex = '1 1 0%';
-
+            // 2. 헤더 행을 탐색하여 CSS 클래스 적용 (구분선 표시용)
+            const headers = doc.querySelectorAll('.cal-header');
+            headers.forEach(header => {
+                const colDiv = header.closest('div[data-testid="column"]');
+                if(colDiv && !colDiv.classList.contains('cal-header-col')) {
+                    colDiv.classList.add('cal-header-col');
                     const rowDiv = colDiv.closest('div[data-testid="stHorizontalBlock"]');
-                    if (rowDiv && rowDiv.dataset.gridStyled !== 'true') {
-                        rowDiv.dataset.gridStyled = 'true';
-                        rowDiv.style.gap = '0';
-                        rowDiv.style.borderLeft = '1px solid #E5E7EB';
+                    if(rowDiv && !rowDiv.classList.contains('cal-header-row')) {
+                        rowDiv.classList.add('cal-header-row');
                     }
                 }
             });
 
+            // 3. 날짜 행을 탐색하여 CSS 클래스 적용 (고정 높이 및 스크롤 표시용)
+            const days = doc.querySelectorAll('.cal-day-num, .cal-cell-empty');
+            days.forEach(day => {
+                const colDiv = day.closest('div[data-testid="column"]');
+                if(colDiv && !colDiv.classList.contains('cal-scroll-col')) {
+                    colDiv.classList.add('cal-scroll-col');
+                    colDiv.classList.add('cal-scrollable');
+                    const rowDiv = colDiv.closest('div[data-testid="stHorizontalBlock"]');
+                    if(rowDiv && !rowDiv.classList.contains('cal-row')) {
+                        rowDiv.classList.add('cal-row');
+                    }
+                }
+            });
+
+            // 4. 일정 버튼을 이미지와 같은 평면 디자인으로 변경
             const markers = doc.querySelectorAll('.event-marker:not([data-processed="true"])');
             markers.forEach(marker => {
                 marker.dataset.processed = 'true';
                 const elemContainer = marker.closest('.element-container');
                 if (!elemContainer) return;
                 
-                elemContainer.style.display = 'none';
+                elemContainer.style.display = 'none'; // 마커 숨김 처리
                 
                 let nextElemContainer = elemContainer.nextElementSibling;
                 while (nextElemContainer && !nextElemContainer.querySelector('button')) {
@@ -666,47 +683,43 @@ def inject_calendar_button_style():
                 }
 
                 if (!nextElemContainer) return;
-                
-                nextElemContainer.style.marginBottom = '0px';
-                nextElemContainer.style.marginTop = '0px';
 
                 const btn = nextElemContainer.querySelector('button');
                 if (btn) {
                     const teamRaw = marker.dataset.team;
                     const style = getStyle(teamRaw);
                     
-                    btn.style.backgroundColor = style.bg;
-                    btn.style.color = style.text;
-                    btn.style.border = 'none';
-                    if (style.borderLeft) btn.style.borderLeft = style.borderLeft;
-                    btn.style.borderRadius = '0px'; 
-                    btn.style.padding = '2px 4px';
-                    btn.style.minHeight = '22px';
-                    btn.style.height = 'auto';
-                    btn.style.margin = '1px 0';
-                    btn.style.width = '100%';
-                    btn.style.display = 'block';
-                    btn.style.textAlign = 'left';
+                    btn.style.setProperty('background-color', style.bg, 'important');
+                    btn.style.setProperty('color', style.text, 'important');
+                    btn.style.setProperty('border', 'none', 'important');
+                    if (style.borderLeft) {
+                        btn.style.setProperty('border-left', style.borderLeft, 'important');
+                    }
+                    btn.style.setProperty('border-radius', '0px', 'important');
+                    btn.style.setProperty('padding', '2px 4px', 'important');
+                    btn.style.setProperty('min-height', '20px', 'important');
+                    btn.style.setProperty('height', 'auto', 'important');
+                    btn.style.setProperty('margin', '1px 0', 'important');
+                    btn.style.setProperty('width', '100%', 'important');
+                    btn.style.setProperty('display', 'block', 'important');
+                    btn.style.setProperty('text-align', 'left', 'important');
                     
                     const p = btn.querySelector('p');
                     if (p) {
-                        p.style.fontSize = '12px';
-                        p.style.fontWeight = '500';
-                        p.style.color = style.text;
-                        p.style.margin = '0';
-                        p.style.textAlign = 'left';
-                        p.style.overflow = 'hidden';
-                        p.style.whiteSpace = 'nowrap';
-                        p.style.textOverflow = 'ellipsis';
+                        p.style.setProperty('font-size', '11.5px', 'important');
+                        p.style.setProperty('font-weight', '600', 'important');
+                        p.style.setProperty('color', style.text, 'important');
+                        p.style.setProperty('margin', '0', 'important');
+                        p.style.setProperty('white-space', 'nowrap', 'important');
+                        p.style.setProperty('overflow', 'hidden', 'important');
+                        p.style.setProperty('text-overflow', 'ellipsis', 'important');
                     }
                     
                     btn.addEventListener('mouseenter', () => {
-                        btn.style.borderColor = 'transparent';
-                        btn.style.filter = 'brightness(0.95)';
+                        btn.style.setProperty('filter', 'brightness(0.92)', 'important');
                     });
                     btn.addEventListener('mouseleave', () => {
-                        btn.style.borderColor = 'transparent';
-                        btn.style.filter = 'none';
+                        btn.style.setProperty('filter', 'none', 'important');
                     });
                 }
             });
@@ -717,6 +730,7 @@ def inject_calendar_button_style():
     observer.observe(doc.body, { childList: true, subtree: true });
     applyCalendarStyles();
     setTimeout(applyCalendarStyles, 500);
+    setTimeout(applyCalendarStyles, 1000);
     </script>
     """
     components.html(js_code, height=0, width=0)
@@ -727,31 +741,29 @@ def render_streamlit_calendar(site_data: dict, year: int, month: int, selected_s
     
     inject_calendar_button_style()
 
-    # 달력 요일 헤더 (구분선 추가)
     header_cols = st.columns(7)
     for col, day_name in zip(header_cols, ['일', '월', '화', '수', '목', '금', '토']):
         color = "#e53e3e" if day_name == '일' else "#4a5568"
         with col:
-            # 헤더 아래쪽에 조금 더 진한 테두리(border-bottom)를 주어 날짜 칸들과 명확히 구분
-            st.markdown(f"<div class='cal-header' style='text-align:center; font-size:13px; font-weight:bold; color:{color}; padding:6px; border-bottom: 2px solid #94A3B8;'>{day_name}</div>", unsafe_allow_html=True)
+            # 보이지 않는 마커 클래스로 헤더를 식별하여 CSS 주입
+            st.markdown(f"<div class='cal-header' style='text-align:center; font-size:13px; font-weight:bold; color:{color}; padding:4px;'>{day_name}</div>", unsafe_allow_html=True)
 
-    # 달력 그리드 렌더링
     for week_idx, week in enumerate(cal):
         cols = st.columns(7)
         for col_idx, day in enumerate(week):
             with cols[col_idx]:
                 if day == 0:
-                    st.markdown("<div class='cal-cell-empty' style='height:120px;'></div>", unsafe_allow_html=True)
+                    st.markdown("<div class='cal-cell-empty'></div>", unsafe_allow_html=True)
                     continue
 
                 current_date = date(year, month, day)
                 day_color = "#e53e3e" if col_idx == 0 else "#4a5568"
                 
                 if current_date == date.today():
-                    bg_style = "background-color: #1a202c; color: white; border-radius: 50%; width: 24px; height: 24px; display: inline-flex; align-items: center; justify-content: center; font-weight: bold;"
-                    day_html = f"<div class='cal-day-num' style='padding:4px 6px; font-size:14px; text-align:left;'><span style='{bg_style}'>{day}</span></div>"
+                    bg_style = "background-color: #1a202c; color: white; border-radius: 50%; width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; font-weight: bold; font-size: 13px;"
+                    day_html = f"<div class='cal-day-num' style='padding:2px 4px; text-align:left;'><span style='{bg_style}'>{day}</span></div>"
                 else:
-                    day_html = f"<div class='cal-day-num' style='color:{day_color}; padding:4px 6px; font-size:14px; text-align:left;'>{day}</div>"
+                    day_html = f"<div class='cal-day-num' style='color:{day_color}; padding:2px 4px; font-size:13px; font-weight:600; text-align:left;'>{day}</div>"
                 
                 st.markdown(day_html, unsafe_allow_html=True)
 
@@ -986,11 +998,11 @@ def main():
     st.title("🏗️ 건설현장 벌점 및 문서 통합 관리 시스템")
 
     with st.sidebar:
-        # 데이터 유실 방지를 위한 백업 및 복구 전용 UI 영역 추가
+        # ⚠️ 데이터 유실 방지를 위한 백업 및 복구 전용 메뉴
         st.header("💾 데이터 백업 및 복구")
         st.info("⚠️ 클라우드 수면 모드로 인한 데이터 초기화 대비용입니다. 주기적으로 백업을 다운로드 해두세요.")
         
-        # 1. 현재 데이터 수동 백업(다운로드)
+        # 백업 기능 (현재 DB파일을 다운로드)
         if os.path.exists(DB_FILENAME):
             with open(DB_FILENAME, "rb") as f:
                 st.download_button(
@@ -1001,7 +1013,7 @@ def main():
                     use_container_width=True
                 )
                 
-        # 2. 초기화 발생 시 복구(업로드)
+        # 복구 기능 (업로드한 파일을 DB로 덮어쓰기)
         backup_file = st.file_uploader("⬆️ 백업 파일 복구 (업로드)", type=['csv'], label_visibility="collapsed")
         if backup_file and st.button("🔄 시스템 복구 실행", use_container_width=True):
             with open(DB_FILENAME, "wb") as f:
