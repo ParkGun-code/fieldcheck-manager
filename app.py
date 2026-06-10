@@ -809,7 +809,7 @@ def get_ai_summary_stream(file_path: str):
 def check_password() -> bool:
     if st.session_state.get("logged_in"): return True
 
-    st.markdown("## 🏛️ 건설현장 벌점 통합 관리 시스템 Login")
+    st.markdown("## 🏛️ 현장점검 통합관리 시스템 Login")
     with st.form("login_form"):
         user_id = st.text_input("아이디")
         password = st.text_input("비밀번호", type="password")
