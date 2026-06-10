@@ -557,8 +557,9 @@ def show_schedule_edit_dialog(site_name: str, step_idx: int):
 
     if closed: st.rerun()
 
+
 # ==========================================
-# 📅 4. Streamlit 네이티브 달력 렌더링 함수 (스크롤 고정 및 구분선 추가)
+# 📅 4. Streamlit 네이티브 달력 렌더링 (스크롤 및 고정크기 완벽 반영)
 # ==========================================
 def make_streamlit_key(*parts) -> str:
     raw = "_".join(clean_cell(part) for part in parts)
@@ -569,52 +570,14 @@ def inject_calendar_button_style():
     <script>
     const doc = window.parent.document;
     
-    // 1. 고정 높이 140px 및 스크롤바 디자인을 위한 CSS 주입
+    // 달력 내부 스크롤바 디자인 (얇고 심플하게)
     if (!doc.getElementById('cal-custom-style')) {
         const style = doc.createElement('style');
         style.id = 'cal-custom-style';
         style.innerHTML = `
-            .cal-scrollable::-webkit-scrollbar { width: 5px; }
-            .cal-scrollable::-webkit-scrollbar-track { background: transparent; }
-            .cal-scrollable::-webkit-scrollbar-thumb { background-color: #CBD5E1; border-radius: 10px; }
-            
-            /* 모든 달력 셀을 140px로 고정하고 오버플로우 시 스크롤 적용 */
-            div[data-testid="column"].cal-scroll-col {
-                height: 140px !important;
-                min-height: 140px !important;
-                max-height: 140px !important;
-                overflow-y: auto !important;
-                overflow-x: hidden !important;
-                padding: 4px !important;
-                border-right: 1px solid #E5E7EB !important;
-                border-bottom: 1px solid #E5E7EB !important;
-            }
-            
-            /* Streamlit 기본 마진을 제거하여 버튼이 빈틈없이 위로 붙도록 설정 */
-            div[data-testid="column"].cal-scroll-col div.element-container {
-                margin-bottom: 0 !important;
-                margin-top: 0 !important;
-            }
-
-            /* 요일 헤더 셀 디자인 및 아래 구분선 */
-            div[data-testid="column"].cal-header-col {
-                padding: 8px 0 !important;
-                border-bottom: 2px solid #94A3B8 !important;
-                border-right: 1px solid #E5E7EB !important;
-                background-color: #F8FAFC !important;
-            }
-            
-            /* Flex layout 갭 제거 */
-            div[data-testid="stHorizontalBlock"].cal-row {
-                gap: 0 !important;
-                border-left: 1px solid #E5E7EB !important;
-            }
-            
-            div[data-testid="stHorizontalBlock"].cal-header-row {
-                gap: 0 !important;
-                border-left: 1px solid #E5E7EB !important;
-                border-top: 1px solid #E5E7EB !important;
-            }
+            ::-webkit-scrollbar { width: 4px; height: 4px; }
+            ::-webkit-scrollbar-track { background: transparent; }
+            ::-webkit-scrollbar-thumb { background-color: #CBD5E1; border-radius: 10px; }
         `;
         doc.head.appendChild(style);
     }
@@ -641,41 +604,32 @@ def inject_calendar_button_style():
 
     function applyCalendarStyles() {
         try {
-            // 2. 헤더 행을 탐색하여 CSS 클래스 적용 (구분선 표시용)
-            const headers = doc.querySelectorAll('.cal-header');
-            headers.forEach(header => {
-                const colDiv = header.closest('div[data-testid="column"]');
-                if(colDiv && !colDiv.classList.contains('cal-header-col')) {
-                    colDiv.classList.add('cal-header-col');
-                    const rowDiv = colDiv.closest('div[data-testid="stHorizontalBlock"]');
-                    if(rowDiv && !rowDiv.classList.contains('cal-header-row')) {
-                        rowDiv.classList.add('cal-header-row');
+            // 1. 네이티브 st.container 의 기본 여백/테두리를 제거하고 캘린더 모양으로 병합
+            const cellMarkers = doc.querySelectorAll('.cal-cell-marker:not([data-styled="true"])');
+            cellMarkers.forEach(marker => {
+                marker.dataset.styled = 'true';
+                // st.container(height=...) 로 생성된 블록을 찾음
+                const scrollWrapper = marker.closest('div[data-testid="stVerticalBlockBorderWrapper"]');
+                if (scrollWrapper) {
+                    scrollWrapper.style.border = '1px solid #E5E7EB'; // 얇은 격자 테두리
+                    scrollWrapper.style.borderRadius = '0px'; // 각진 모서리
+                    
+                    const innerBlock = scrollWrapper.querySelector('div[data-testid="stVerticalBlock"]');
+                    if (innerBlock) {
+                        innerBlock.style.padding = '2px 4px'; // 여백 최소화
+                        innerBlock.style.gap = '0px'; // 버튼 간격 최소화
                     }
                 }
             });
 
-            // 3. 날짜 행을 탐색하여 CSS 클래스 적용 (고정 높이 및 스크롤 표시용)
-            const days = doc.querySelectorAll('.cal-day-num, .cal-cell-empty');
-            days.forEach(day => {
-                const colDiv = day.closest('div[data-testid="column"]');
-                if(colDiv && !colDiv.classList.contains('cal-scroll-col')) {
-                    colDiv.classList.add('cal-scroll-col');
-                    colDiv.classList.add('cal-scrollable');
-                    const rowDiv = colDiv.closest('div[data-testid="stHorizontalBlock"]');
-                    if(rowDiv && !rowDiv.classList.contains('cal-row')) {
-                        rowDiv.classList.add('cal-row');
-                    }
-                }
-            });
-
-            // 4. 일정 버튼을 이미지와 같은 평면 디자인으로 변경
+            // 2. 일정 버튼 스타일링
             const markers = doc.querySelectorAll('.event-marker:not([data-processed="true"])');
             markers.forEach(marker => {
                 marker.dataset.processed = 'true';
                 const elemContainer = marker.closest('.element-container');
                 if (!elemContainer) return;
                 
-                elemContainer.style.display = 'none'; // 마커 숨김 처리
+                elemContainer.style.display = 'none'; 
                 
                 let nextElemContainer = elemContainer.nextElementSibling;
                 while (nextElemContainer && !nextElemContainer.querySelector('button')) {
@@ -683,6 +637,9 @@ def inject_calendar_button_style():
                 }
 
                 if (!nextElemContainer) return;
+
+                nextElemContainer.style.marginBottom = '0px';
+                nextElemContainer.style.marginTop = '0px';
 
                 const btn = nextElemContainer.querySelector('button');
                 if (btn) {
@@ -695,11 +652,11 @@ def inject_calendar_button_style():
                     if (style.borderLeft) {
                         btn.style.setProperty('border-left', style.borderLeft, 'important');
                     }
-                    btn.style.setProperty('border-radius', '0px', 'important');
+                    btn.style.setProperty('border-radius', '0px', 'important'); 
                     btn.style.setProperty('padding', '2px 4px', 'important');
-                    btn.style.setProperty('min-height', '20px', 'important');
+                    btn.style.setProperty('min-height', '22px', 'important'); 
                     btn.style.setProperty('height', 'auto', 'important');
-                    btn.style.setProperty('margin', '1px 0', 'important');
+                    btn.style.setProperty('margin', '1px 0', 'important'); 
                     btn.style.setProperty('width', '100%', 'important');
                     btn.style.setProperty('display', 'block', 'important');
                     btn.style.setProperty('text-align', 'left', 'important');
@@ -730,7 +687,7 @@ def inject_calendar_button_style():
     observer.observe(doc.body, { childList: true, subtree: true });
     applyCalendarStyles();
     setTimeout(applyCalendarStyles, 500);
-    setTimeout(applyCalendarStyles, 1000);
+    setTimeout(applyCalendarStyles, 1000); // 렌더링 지연에 대비해 한 번 더 실행
     </script>
     """
     components.html(js_code, height=0, width=0)
@@ -741,50 +698,57 @@ def render_streamlit_calendar(site_data: dict, year: int, month: int, selected_s
     
     inject_calendar_button_style()
 
+    # 달력 헤더 (구분선 포함)
     header_cols = st.columns(7)
     for col, day_name in zip(header_cols, ['일', '월', '화', '수', '목', '금', '토']):
         color = "#e53e3e" if day_name == '일' else "#4a5568"
         with col:
-            # 보이지 않는 마커 클래스로 헤더를 식별하여 CSS 주입
-            st.markdown(f"<div class='cal-header' style='text-align:center; font-size:13px; font-weight:bold; color:{color}; padding:4px;'>{day_name}</div>", unsafe_allow_html=True)
+            st.markdown(f"<div style='text-align:center; font-size:13px; font-weight:bold; color:{color}; padding:6px; border-bottom: 2px solid #94A3B8;'>{day_name}</div>", unsafe_allow_html=True)
 
+    # 캘린더 그리드 (고정 높이 컨테이너 활용)
     for week_idx, week in enumerate(cal):
         cols = st.columns(7)
         for col_idx, day in enumerate(week):
             with cols[col_idx]:
                 if day == 0:
-                    st.markdown("<div class='cal-cell-empty'></div>", unsafe_allow_html=True)
+                    # 빈 날짜도 정확히 동일한 120px 높이 유지
+                    with st.container(height=120):
+                        st.markdown("<div class='cal-cell-marker'></div>", unsafe_allow_html=True)
                     continue
 
-                current_date = date(year, month, day)
-                day_color = "#e53e3e" if col_idx == 0 else "#4a5568"
-                
-                if current_date == date.today():
-                    bg_style = "background-color: #1a202c; color: white; border-radius: 50%; width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; font-weight: bold; font-size: 13px;"
-                    day_html = f"<div class='cal-day-num' style='padding:2px 4px; text-align:left;'><span style='{bg_style}'>{day}</span></div>"
-                else:
-                    day_html = f"<div class='cal-day-num' style='color:{day_color}; padding:2px 4px; font-size:13px; font-weight:600; text-align:left;'>{day}</div>"
-                
-                st.markdown(day_html, unsafe_allow_html=True)
-
-                day_events = []
-                for site, steps in site_data.items():
-                    if selected_site and selected_site != "전체 현장" and site != selected_site: continue
-                    for step_idx, step in enumerate(steps):
-                        if step.get('date') == current_date:
-                            day_events.append((site, step_idx, step))
-
-                if not day_events: continue
-                day_events.sort(key=calendar_event_sort_key)
-
-                for event_no, (site, step_idx, step) in enumerate(day_events):
-                    label = truncate_label(make_calendar_event_label(site, step), max_chars=28)
-                    btn_key = make_streamlit_key("cal_btn", year, month, week_idx, col_idx, event_no, site, step_idx)
-                    team_val = get_step_team_value(step)
+                # 핵심: 스트림릿 네이티브 스크롤 컨테이너 적용. 
+                # 120px는 날짜 헤더 + 3개의 일정이 들어갈 수 있는 완벽한 크기입니다. 4개부터는 스크롤 생성.
+                with st.container(height=120):
+                    st.markdown("<div class='cal-cell-marker'></div>", unsafe_allow_html=True)
+                    current_date = date(year, month, day)
+                    day_color = "#e53e3e" if col_idx == 0 else "#4a5568"
                     
-                    st.markdown(f"<div class='event-marker' data-team='{team_val}'></div>", unsafe_allow_html=True)
-                    if st.button(label, key=btn_key, use_container_width=True):
-                        show_schedule_edit_dialog(site, step_idx)
+                    if current_date == date.today():
+                        bg_style = "background-color: #1a202c; color: white; border-radius: 50%; width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; font-weight: bold; font-size: 13px;"
+                        day_html = f"<div style='padding:0 2px 2px 2px; text-align:left; margin-bottom: 2px;'><span style='{bg_style}'>{day}</span></div>"
+                    else:
+                        day_html = f"<div style='color:{day_color}; padding:2px; font-size:13px; font-weight:600; text-align:left; margin-bottom: 2px;'>{day}</div>"
+                    
+                    st.markdown(day_html, unsafe_allow_html=True)
+
+                    day_events = []
+                    for site, steps in site_data.items():
+                        if selected_site and selected_site != "전체 현장" and site != selected_site: continue
+                        for step_idx, step in enumerate(steps):
+                            if step.get('date') == current_date:
+                                day_events.append((site, step_idx, step))
+
+                    if not day_events: continue
+                    day_events.sort(key=calendar_event_sort_key)
+
+                    for event_no, (site, step_idx, step) in enumerate(day_events):
+                        label = truncate_label(make_calendar_event_label(site, step), max_chars=28)
+                        btn_key = make_streamlit_key("cal_btn", year, month, week_idx, col_idx, event_no, site, step_idx)
+                        team_val = get_step_team_value(step)
+                        
+                        st.markdown(f"<div class='event-marker' data-team='{team_val}'></div>", unsafe_allow_html=True)
+                        if st.button(label, key=btn_key, use_container_width=True):
+                            show_schedule_edit_dialog(site, step_idx)
 
 # ==========================================
 # 🤖 5. 공무원 양식 AI 요약 프롬프트 적용
@@ -1199,7 +1163,7 @@ def main():
                             with btn_col2: st.write("")
                             
                         with btn_col3:
-                            if st.button("🗑️", key=f"delf_{actual_idx}_{file_path}", help="삭제"):
+                            if st.button("🗑️ 삭제", key=f"delf_{actual_idx}_{file_path}", use_container_width=True):
                                 steps[actual_idx]['files'].remove(file_path)
                                 try: os.remove(file_path) 
                                 except: pass
@@ -1207,10 +1171,19 @@ def main():
                                 st.rerun()
 
                     if checked_files_to_download:
+                        st.markdown("<br>", unsafe_allow_html=True)
                         zip_buffer = io.BytesIO()
                         with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
                             for fpath in checked_files_to_download: zip_file.write(fpath, arcname=os.path.basename(fpath))
-                        st.download_button("💾 체크된 파일 다운로드", data=zip_buffer.getvalue(), file_name=f"첨부파일_{date.today().strftime('%Y%m%d')}.zip", mime="application/zip", use_container_width=True, key=f"zip_{actual_idx}")
+                        st.download_button(
+                            label=f"💾 체크된 파일 {len(checked_files_to_download)}개 다운로드 (.zip)",
+                            data=zip_buffer.getvalue(),
+                            file_name=f"첨부파일_다운로드_{date.today().strftime('%Y%m%d')}.zip",
+                            mime="application/zip",
+                            type="primary",
+                            use_container_width=True,
+                            key=f"zip_dl_{actual_idx}"
+                        )
 
 if __name__ == "__main__":
     main()
