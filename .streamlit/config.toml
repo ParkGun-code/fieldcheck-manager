@@ -1,2 +1,5 @@
 [server]
 enableStaticServing = true
+ADMIN_ID = "molitdj"
+ADMIN_PW = "eowjscjd1!"
+GEMINI_API_KEY = "AIzaSyBRSKqPy-IVLqAqICwaJmli5YKifNcRdoA"
