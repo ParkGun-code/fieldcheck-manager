@@ -559,7 +559,7 @@ def show_schedule_edit_dialog(site_name: str, step_idx: int):
 
 
 # ==========================================
-# 📅 4. Streamlit 네이티브 달력 렌더링 (스크롤 및 고정크기 완벽 반영)
+# 📅 4. Streamlit 네이티브 달력 렌더링 (모바일 반응형 완벽 보완)
 # ==========================================
 def make_streamlit_key(*parts) -> str:
     raw = "_".join(clean_cell(part) for part in parts)
@@ -578,6 +578,23 @@ def inject_calendar_button_style():
             ::-webkit-scrollbar { width: 4px; height: 4px; }
             ::-webkit-scrollbar-track { background: transparent; }
             ::-webkit-scrollbar-thumb { background-color: #CBD5E1; border-radius: 10px; }
+            
+            /* 📱 [모바일 대응 핵심] 화면이 좁아져도 7열(요일)이 세로로 무너지지 않도록 강제 가로 배치 */
+            div[data-testid="stHorizontalBlock"].cal-row,
+            div[data-testid="stHorizontalBlock"].cal-header-row {
+                display: flex !important;
+                flex-direction: row !important;
+                flex-wrap: nowrap !important;
+                min-width: 800px !important; /* 모바일에서 찌그러지지 않도록 최소 너비 강제 (넘치면 전체 화면 가로 스크롤 가능) */
+            }
+
+            /* 요일 헤더 및 날짜 셀의 크기가 좁아지지 않도록 폭 강제 고정 */
+            div[data-testid="column"].cal-header-col,
+            div[data-testid="column"].cal-scroll-col {
+                width: 14.285% !important;
+                flex: 1 1 0% !important;
+                min-width: 110px !important;
+            }
         `;
         doc.head.appendChild(style);
     }
@@ -604,10 +621,34 @@ def inject_calendar_button_style():
 
     function applyCalendarStyles() {
         try {
-            // 1. 네이티브 st.container 의 기본 여백/테두리를 제거하고 캘린더 모양으로 병합
+            // 헤더 행 CSS 클래스 적용 (모바일 가로배치용)
+            const headers = doc.querySelectorAll('.cal-header');
+            headers.forEach(header => {
+                const colDiv = header.closest('div[data-testid="column"]');
+                if(colDiv && !colDiv.classList.contains('cal-header-col')) {
+                    colDiv.classList.add('cal-header-col');
+                    const rowDiv = colDiv.closest('div[data-testid="stHorizontalBlock"]');
+                    if(rowDiv && !rowDiv.classList.contains('cal-header-row')) {
+                        rowDiv.classList.add('cal-header-row');
+                    }
+                }
+            });
+
+            // 네이티브 st.container 의 기본 여백/테두리를 제거하고 캘린더 모양으로 병합
             const cellMarkers = doc.querySelectorAll('.cal-cell-marker:not([data-styled="true"])');
             cellMarkers.forEach(marker => {
                 marker.dataset.styled = 'true';
+                
+                // 날짜 행 CSS 클래스 적용 (모바일 가로배치용)
+                const colDivOuter = marker.closest('div[data-testid="column"]');
+                if(colDivOuter && !colDivOuter.classList.contains('cal-scroll-col')) {
+                    colDivOuter.classList.add('cal-scroll-col');
+                    const rowDiv = colDivOuter.closest('div[data-testid="stHorizontalBlock"]');
+                    if(rowDiv && !rowDiv.classList.contains('cal-row')) {
+                        rowDiv.classList.add('cal-row');
+                    }
+                }
+
                 // st.container(height=...) 로 생성된 블록을 찾음
                 const scrollWrapper = marker.closest('div[data-testid="stVerticalBlockBorderWrapper"]');
                 if (scrollWrapper) {
@@ -622,7 +663,7 @@ def inject_calendar_button_style():
                 }
             });
 
-            // 2. 일정 버튼 스타일링
+            // 일정 버튼 스타일링
             const markers = doc.querySelectorAll('.event-marker:not([data-processed="true"])');
             markers.forEach(marker => {
                 marker.dataset.processed = 'true';
@@ -703,7 +744,7 @@ def render_streamlit_calendar(site_data: dict, year: int, month: int, selected_s
     for col, day_name in zip(header_cols, ['일', '월', '화', '수', '목', '금', '토']):
         color = "#e53e3e" if day_name == '일' else "#4a5568"
         with col:
-            st.markdown(f"<div style='text-align:center; font-size:13px; font-weight:bold; color:{color}; padding:6px; border-bottom: 2px solid #94A3B8;'>{day_name}</div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='cal-header' style='text-align:center; font-size:13px; font-weight:bold; color:{color}; padding:6px; border-bottom: 2px solid #94A3B8;'>{day_name}</div>", unsafe_allow_html=True)
 
     # 캘린더 그리드 (고정 높이 컨테이너 활용)
     for week_idx, week in enumerate(cal):
@@ -717,7 +758,7 @@ def render_streamlit_calendar(site_data: dict, year: int, month: int, selected_s
                     continue
 
                 # 핵심: 스트림릿 네이티브 스크롤 컨테이너 적용. 
-                # 120px는 날짜 헤더 + 3개의 일정이 들어갈 수 있는 완벽한 크기입니다. 4개부터는 스크롤 생성.
+                # 120px는 날짜 헤더 + 3개의 일정이 들어갈 수 있는 완벽한 크기입니다. 4개부터는 내부 스크롤 생성.
                 with st.container(height=120):
                     st.markdown("<div class='cal-cell-marker'></div>", unsafe_allow_html=True)
                     current_date = date(year, month, day)
@@ -959,7 +1000,7 @@ def main():
     if "cal_year" not in st.session_state: st.session_state.cal_year = date.today().year
     if "cal_month" not in st.session_state: st.session_state.cal_month = date.today().month
 
-    st.title("🏗️ 건설현장 벌점 및 문서 통합 관리 시스템")
+    st.title("🏗️ 현장점검 통합관리 시스템")
 
     with st.sidebar:
         # ⚠️ 데이터 유실 방지를 위한 백업 및 복구 전용 메뉴
