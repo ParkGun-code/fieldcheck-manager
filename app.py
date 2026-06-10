@@ -136,16 +136,61 @@ def make_dialog_draggable():
     """
     components.html(drag_js, height=0, width=0)
 
+# 💡 [수정됨] 요약 결과를 기억(캐싱)하여 창 튕김 및 무한 반복을 방지하는 스마트 AI 대화창
 @st.dialog("✨ AI 심의안건 보고서 작성 (새창)", width="large")
 def show_summary_dialog(file_path, file_name):
     make_dialog_draggable() 
+    
+    # 실수로 창 바깥을 눌러서 닫히는 현상을 안내
+    st.warning("💡 **안내:** 요약이 진행되는 동안 **어두운 배경(창 바깥쪽)을 클릭하면 창이 강제로 닫힙니다.** 완료될 때까지 기다려주세요.")
     st.markdown(f"### 📄 [{file_name}] 분석 결과")
+    
     if not GEMINI_API_KEY:
         st.error("⚠️ 시스템에 AI API 키가 설정되어 있지 않습니다.")
         return
-    with st.spinner("AI가 공무원 양식으로 보고서를 작성 중입니다..."):
-        st.write_stream(get_ai_summary_stream(file_path))
-    if st.button("닫기", type="primary"): st.rerun()
+
+    # 파일 이름을 기반으로 고유한 메모리(세션) 방 이름 만들기
+    state_key = f"ai_summary_{file_name}"
+    
+    # 1. 만약 이 파일을 요약한 기억(메모리)이 없다면 -> 새로 요약 시작
+    if state_key not in st.session_state:
+        with st.spinner("AI가 공무원 양식으로 보고서를 작성 중입니다..."):
+            # 요약 결과를 받아서 바로 출력함과 동시에 메모리에 저장
+            summary_result = st.write_stream(get_ai_summary_stream(file_path))
+            st.session_state[state_key] = summary_result
+            
+    # 2. 이미 요약해 둔 기억이 있다면 -> 즉시 메모리에서 불러와서 보여줌
+    else:
+        st.markdown(st.session_state[state_key])
+
+    st.divider()
+    
+    # 하단 버튼 배치 (닫기 / 다시 요약하기)
+    c1, c2, c3 = st.columns([1, 2, 1])
+    with c1:
+        # 이제 메모리에 결과가 있으므로, 이 버튼을 눌러도 다시 요약하지 않고 0.1초만에 즉시 창이 닫힙니다.
+        if st.button("닫기", type="primary", use_container_width=True):
+            st.rerun()
+    with c3:
+        # 혹시 처음부터 새로 요약하고 싶을 때를 대비한 버튼 (메모리를 지우고 다시 시작)
+        if st.button("🔄 다시 요약하기", use_container_width=True):
+            del st.session_state[state_key]
+            st.rerun()
+
+@st.dialog("📄 첨부 문서 뷰어 (새창)", width="large")
+def show_file_dialog(file_path, file_name):
+    make_dialog_draggable() 
+    st.markdown(f"### 📎 {file_name}")
+    ext = os.path.splitext(file_path)[1].lower()
+    try: 
+        if ext in ['.png', '.jpg', '.jpeg']: st.image(file_path, use_column_width=True)
+        elif ext == '.pdf':
+            with open(file_path, "rb") as f: base64_pdf = base64.b64encode(f.read()).decode('utf-8')
+            st.markdown(f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="700" type="application/pdf"></iframe>', unsafe_allow_html=True)
+        elif ext == '.txt':
+            with open(file_path, "r", encoding="utf-8") as f: st.text_area("문서 내용", f.read(), height=500)
+        else: st.warning("⚠️ 지원하지 않는 형식입니다. 체크박스를 통해 다운로드해 주세요.")
+    except Exception as e: st.error(f"오류가 발생했습니다: {e}")
 
 # ==========================================
 # 📌 현장 상세정보 공통 처리
@@ -931,19 +976,16 @@ def main():
                         file_name = os.path.basename(file_path)
                         ext = file_name.lower().split('.')[-1]
                         
-                        # 💡 [수정] 글씨가 잘 보이도록 버튼 칸 비율 넓게 조정 (4.5 : 2.5 : 2.5 : 2.5 비율)
                         chk_col, btn_col1, btn_col2, btn_col3 = st.columns([4.5, 2.5, 2.5, 2.5])
                         
                         with chk_col:
                             if st.checkbox(f"📎 {file_name}", key=f"chk_{actual_idx}_{file_path}"):
                                 checked_files_to_download.append(file_path)
                         
-                        # 💡 [수정] 팝업 뷰어 대신 다운로드 버튼으로 변경하여 로컬 전용 앱으로 열리도록 유도
                         with btn_col1:
                             with open(file_path, "rb") as f:
                                 st.download_button(label="파일보기", data=f, file_name=file_name, use_container_width=True, key=f"v_{actual_idx}_{file_path}")
                         
-                        # 💡 [수정] 아이콘 제거 및 텍스트 적용
                         if ext in ['pdf', 'png', 'jpg', 'jpeg', 'txt']:
                             with btn_col2:
                                 if st.button("AI요약", key=f"ai_{actual_idx}_{file_path}", use_container_width=True):
