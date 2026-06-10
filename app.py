@@ -68,7 +68,7 @@ def hwp_to_pdf(hwp_path: str) -> str:
 # ==========================================
 # ⚙️ 1. 기본 설정 및 전역 변수
 # ==========================================
-st.set_page_config(page_title="건설현장 벌점 통합 관리 웹", page_icon="🏛️", layout="wide")
+st.set_page_config(page_title="현장점검 통합관리 시스템", page_icon="🏛️", layout="wide")
 
 SHARED_USER_ID = os.environ.get("ADMIN_ID", st.secrets.get("ADMIN_ID", "molitdj_default"))
 SHARED_PASSWORD = os.environ.get("ADMIN_PW", st.secrets.get("ADMIN_PW", "change_me!"))
