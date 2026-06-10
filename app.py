@@ -637,7 +637,9 @@ def get_ai_summary_stream(file_path: str):
                         return
                     time.sleep(2)
                     retries += 1
-                if retries >= max_retries: return yield "❌ PDF 분석 시간이 초과되었습니다."
+                if retries >= max_retries:
+                    yield "❌ PDF 분석 시간이 초과되었습니다."
+                    return
                     
             yield "💡 스캔 완료! 보고서 작성을 시작합니다...\n\n---\n\n"
             for chunk in client.models.generate_content_stream(model='gemini-2.5-flash', contents=[prompt, uploaded_file]):
