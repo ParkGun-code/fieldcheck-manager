@@ -87,6 +87,9 @@ PENALTY_INTERVALS = [
     (40, "벌점 심의위원회 개최 및 최종 결과 통보")
 ]
 
+# 💡 새로 추가된 점검결과 카테고리
+RESULT_CATEGORIES = ["해당없음", "현장지시", "현지시정", "과태료", "벌점", "벌칙"]
+
 # ==========================================
 # 🛡️ 유틸리티 함수 (보안 및 데이터 안정성)
 # ==========================================
@@ -136,12 +139,9 @@ def make_dialog_draggable():
     """
     components.html(drag_js, height=0, width=0)
 
-# 💡 [수정됨] 요약 결과를 기억(캐싱)하여 창 튕김 및 무한 반복을 방지하는 스마트 AI 대화창
 @st.dialog("✨ AI 심의안건 보고서 작성 (새창)", width="large")
 def show_summary_dialog(file_path, file_name):
     make_dialog_draggable() 
-    
-    # 실수로 창 바깥을 눌러서 닫히는 현상을 안내
     st.warning("💡 **안내:** 요약이 진행되는 동안 **어두운 배경(창 바깥쪽)을 클릭하면 창이 강제로 닫힙니다.** 완료될 때까지 기다려주세요.")
     st.markdown(f"### 📄 [{file_name}] 분석 결과")
     
@@ -149,30 +149,21 @@ def show_summary_dialog(file_path, file_name):
         st.error("⚠️ 시스템에 AI API 키가 설정되어 있지 않습니다.")
         return
 
-    # 파일 이름을 기반으로 고유한 메모리(세션) 방 이름 만들기
     state_key = f"ai_summary_{file_name}"
     
-    # 1. 만약 이 파일을 요약한 기억(메모리)이 없다면 -> 새로 요약 시작
     if state_key not in st.session_state:
         with st.spinner("AI가 공무원 양식으로 보고서를 작성 중입니다..."):
-            # 요약 결과를 받아서 바로 출력함과 동시에 메모리에 저장
             summary_result = st.write_stream(get_ai_summary_stream(file_path))
             st.session_state[state_key] = summary_result
-            
-    # 2. 이미 요약해 둔 기억이 있다면 -> 즉시 메모리에서 불러와서 보여줌
     else:
         st.markdown(st.session_state[state_key])
 
     st.divider()
-    
-    # 하단 버튼 배치 (닫기 / 다시 요약하기)
     c1, c2, c3 = st.columns([1, 2, 1])
     with c1:
-        # 이제 메모리에 결과가 있으므로, 이 버튼을 눌러도 다시 요약하지 않고 0.1초만에 즉시 창이 닫힙니다.
         if st.button("닫기", type="primary", use_container_width=True):
             st.rerun()
     with c3:
-        # 혹시 처음부터 새로 요약하고 싶을 때를 대비한 버튼 (메모리를 지우고 다시 시작)
         if st.button("🔄 다시 요약하기", use_container_width=True):
             del st.session_state[state_key]
             st.rerun()
@@ -196,26 +187,29 @@ def show_file_dialog(file_path, file_name):
 # 📌 현장 상세정보 공통 처리
 # ==========================================
 SITE_DETAIL_FIELDS = [
-    ("site_office", "현장사무실", ["현장사무실", "현장 사무실", "현장사무소", "현장 사무소", "현장사무실 주소", "사무실주소"]),
-    ("postal_address", "별도 우편 주소", ["별도 우편 주소", "별도우편주소", "우편주소", "우편 주소", "별도주소", "주소"]),
-    ("construction_period", "착공일~준공일", ["착공일~준공일", "착공일 ~ 준공일", "착공일-준공일", "착공일 - 준공일", "착공/준공", "착공 및 준공", "공사기간", "공사 기간", "공사기간(착공~준공)", "공사기간(착공일~준공일)"]),
-    ("construction_start", "착공일", ["착공일", "착공 일자", "공사시작일", "공사 시작일", "착수일"]),
-    ("construction_end", "준공일", ["준공일", "준공 일자", "공사종료일", "공사 종료일", "완료일"]),
-    ("total_cost", "총공사비", ["총공사비", "총 공사비", "공사비", "도급액", "계약금액", "총사업비"]),
-    ("progress_rate", "공정률", ["공정률", "공정율", "진도율", "공사진행률", "공사진행율"]),
-    ("builder", "시공사", ["시공사", "시공 회사", "시공회사", "시공회사명", "시공자", "시공자명", "건설사", "시공업체"]),
-    ("supervisor", "감리사", ["감리사", "감리 회사", "감리회사", "감리회사명", "감리자", "감리자명", "감리업체"]),
-    ("site_manager", "현장대리인", ["현장대리인", "현장 대리인", "현장대리인 성명", "현장대리인명", "대리인", "성명"]),
-    ("manager_phone", "현장대리인 전화번호", ["현장대리인 전화번호", "현장대리인 연락처", "현장대리인 휴대폰", "현장대리인 핸드폰", "대리인 전화번호", "대리인 연락처", "전화번호", "연락처", "휴대폰", "핸드폰"]),
-    ("manager_email", "현장대리인 이메일", ["현장대리인 이메일", "현장대리인 메일", "현장대리인 E-mail", "현장대리인 email", "대리인 이메일", "이메일", "메일", "E-mail", "Email", "email"]),
-    ("client", "발주처", ["발주처\n(인·허가 기관)", "발주처(인·허가 기관)", "발주처", "인허가기관", "인·허가 기관", "인허가 기관"]),
-    ("status", "공사진행상태", ["공사진행상태", "공사 진행 상태", "진행상태", "공사상태", "현장상태"]),
+    ("site_office", "현장사무실", ["현장사무실", "현장 사무실", "현장사무소"]),
+    ("postal_address", "별도 우편 주소", ["별도 우편 주소", "우편주소"]),
+    ("construction_period", "착공일~준공일", ["착공일~준공일", "공사기간"]),
+    ("construction_start", "착공일", ["착공일", "착수일"]),
+    ("construction_end", "준공일", ["준공일", "완료일"]),
+    ("total_cost", "총공사비", ["총공사비", "도급액"]),
+    ("progress_rate", "공정률", ["공정률", "진도율"]),
+    ("builder", "시공사", ["시공사", "시공 회사"]),
+    ("supervisor", "감리사", ["감리사", "감리 회사"]),
+    ("site_manager", "현장대리인", ["현장대리인", "대리인"]),
+    ("manager_phone", "현장대리인 전화번호", ["현장대리인 전화번호", "연락처"]),
+    ("manager_email", "현장대리인 이메일", ["현장대리인 이메일", "이메일"]),
+    ("client", "발주처", ["발주처", "인허가기관"]),
+    ("status", "공사진행상태", ["공사진행상태", "진행상태"]),
 ]
 
+# 💡 새로 추가된 점검결과(inspection_results) 및 확인서요약(result_summary) 필드 매핑
 STEP_EXTRA_FIELDS = [
-    ("inspection_period", "점검시기", ["점검시기", "점검 시기", "점검구분", "점검 구분", "점검유형", "점검 유형", "점검명"]),
-    ("team", "담당조", ["담당조", "점검조", "조", "반", "담당반"]),
-    ("inspectors", "점검자", ["점검자", "점검자명", "점검자 명", "담당자", "검사자", "참석자"]),
+    ("inspection_period", "점검시기", ["점검시기", "점검구분", "점검유형"]),
+    ("team", "담당조", ["담당조", "점검조", "조"]),
+    ("inspectors", "점검자", ["점검자", "담당자", "참석자"]),
+    ("inspection_results", "점검결과", ["점검결과", "결과분류", "처분"]),
+    ("result_summary", "확인서요약", ["확인서요약", "요약내용", "확인서"])
 ]
 
 MONTHLY_INSPECTION_OPTIONS = [f"{m}월 상시점검" for m in range(1, 13)]
@@ -428,6 +422,11 @@ def show_schedule_edit_dialog(site_name: str, step_idx: int):
         with c3: new_team = st.text_input("담당조", value=clean_cell(step.get("team", "")) or extract_team_from_desc(step.get("desc", "")), placeholder="예: 1조")
         with c4: new_desc = st.text_input("점검/업무명", value=clean_cell(step.get("desc", "")))
 
+        # 💡 [수정됨] 팝업창에도 결과 다중선택 및 요약 기능 반영
+        c5, c6 = st.columns([1, 2])
+        with c5: new_results = st.multiselect("점검결과 분류", RESULT_CATEGORIES, default=step.get("inspection_results", []))
+        with c6: new_summary = st.text_area("확인서 요약", value=step.get("result_summary", ""), height=68)
+
         new_inspectors = st.text_area("점검자", value=clean_cell(step.get("inspectors", "")), height=80)
         new_memo = st.text_area("메모", value=clean_cell(step.get("memo", "")), height=100)
 
@@ -438,7 +437,11 @@ def show_schedule_edit_dialog(site_name: str, step_idx: int):
         with close_btn: closed = st.form_submit_button("닫기", use_container_width=True)
 
     if submitted:
-        steps[step_idx].update({"date": new_date, "inspection_period": new_period, "team": new_team, "inspectors": new_inspectors, "desc": new_desc, "memo": new_memo})
+        steps[step_idx].update({
+            "date": new_date, "inspection_period": new_period, "team": new_team, 
+            "inspectors": new_inspectors, "desc": new_desc, "memo": new_memo,
+            "inspection_results": new_results, "result_summary": new_summary # 💡 추가됨
+        })
         apply_site_details_to_all_steps(site_name, detail_values)
         steps.sort(key=lambda x: x['date'])
         save_data(st.session_state.site_data)
@@ -699,12 +702,21 @@ def load_data() -> dict:
                 if not name or not date_str or not desc: continue
                 date_obj = parse_date_value(date_str)
                 if not date_obj: continue
+                
                 files_str = clean_cell(row.get('파일경로', ''))
                 step = {
                     "date": date_obj, "desc": desc, "memo": clean_cell(row.get('메모', '')),
                     "files": files_str.split("|") if files_str else [],
                 }
-                for key, label, _ in STEP_EXTRA_FIELDS: step[key] = clean_cell(row.get(label, ''))
+                
+                # 💡 [수정됨] 점검결과는 리스트(복수형)로 변환해서 불러옵니다.
+                for key, label, _ in STEP_EXTRA_FIELDS:
+                    raw_val = clean_cell(row.get(label, ''))
+                    if key == "inspection_results":
+                        step[key] = [x.strip() for x in raw_val.split(',')] if raw_val else []
+                    else:
+                        step[key] = raw_val
+                        
                 if not step.get("inspection_period"): step["inspection_period"] = infer_inspection_period(plan_date=date_obj, desc=desc)
                 if not step.get("team"): step["team"] = extract_team_from_desc(desc)
                 for key, label, _ in SITE_DETAIL_FIELDS: step[key] = clean_cell(row.get(label, ''))
@@ -719,7 +731,13 @@ def save_data(site_data: dict) -> None:
     for name in sorted(site_data.keys()):
         for step in site_data[name]:
             row = [row_num, name, step['date'].strftime('%Y-%m-%d'), step.get('desc', ''), step.get('memo', ''), "|".join(step.get('files', []))]
-            for key, _, _ in STEP_EXTRA_FIELDS: row.append(step.get(key, ''))
+            
+            # 💡 [수정됨] 점검결과(리스트)는 쉼표로 이어서 텍스트로 저장합니다.
+            for key, _, _ in STEP_EXTRA_FIELDS: 
+                val = step.get(key, '')
+                if isinstance(val, list): row.append(",".join(val))
+                else: row.append(val)
+                
             for key, _, _ in SITE_DETAIL_FIELDS: row.append(step.get(key, ''))
             rows.append(row)
             row_num += 1
@@ -775,7 +793,8 @@ def process_excel_schedule(file) -> None:
                     if v: inherited_details[k] = v
                 st.session_state.site_data[site_name].append({
                     "date": plan_date, "desc": desc, "memo": memo, "files": [],
-                    "inspection_period": inspection_period, "team": team, "inspectors": inspectors, **inherited_details,
+                    "inspection_period": inspection_period, "team": team, "inspectors": inspectors, 
+                    "inspection_results": [], "result_summary": "", **inherited_details,
                 })
                 st.session_state.site_data[site_name].sort(key=lambda x: x['date'])
                 success_count += 1
@@ -835,16 +854,39 @@ def main():
                     st.session_state.site_data[new_site_name] = [{
                         "date": start_date, "desc": "현장점검 실시", "memo": "", "files": [],
                         "inspection_period": new_inspection_period, "team": new_team, "inspectors": new_inspectors,
-                        **new_detail_values,
+                        "inspection_results": [], "result_summary": "", **new_detail_values,
                     }]
                     save_data(st.session_state.site_data)
                     st.rerun()
 
         st.divider()
-        st.header("📋 프로젝트 선택")
+        # 💡 [수정됨] 스마트 결과 필터링(검색) 기능 추가
+        st.header("📋 프로젝트 선택 및 필터")
         search_query = st.text_input("🔍 현장명 검색")
+        filter_results = st.multiselect("🏷️ 점검결과 포함 현장 필터링", RESULT_CATEGORIES)
+        
         all_sites = sorted(list(st.session_state.site_data.keys()))
-        site_options = ["전체 현장"] + [s for s in all_sites if search_query.lower() in s.lower()]
+        filtered_sites = []
+        
+        for site in all_sites:
+            # 1. 텍스트 검색 필터
+            if search_query and search_query.lower() not in site.lower():
+                continue
+            
+            # 2. 키워드 필터 (선택한 결과 카테고리가 해당 현장의 일정 중 하나라도 포함되어 있으면 리스트업)
+            if filter_results:
+                has_match = False
+                for step in st.session_state.site_data[site]:
+                    if set(filter_results).intersection(set(step.get('inspection_results', []))):
+                        has_match = True
+                        break
+                if not has_match:
+                    continue
+                    
+            filtered_sites.append(site)
+
+        site_options = ["전체 현장"] + filtered_sites
+
         with st.container(height=300, border=True):
             selected_site = st.radio("일정을 볼 현장 선택", site_options, label_visibility="collapsed", format_func=lambda site: make_site_list_label(site, st.session_state.site_data))
         if selected_site != "전체 현장" and st.button("🗑️ 현재 프로젝트 삭제", type="primary", use_container_width=True):
@@ -891,7 +933,7 @@ def main():
                     custom_team = st.text_input("담당조", key="c_team")
                     custom_inspectors = st.text_input("점검자", key="c_inspectors")
                 if st.button("일정 끼워넣기", use_container_width=True):
-                    steps.append({"date": adjust_weekend(custom_date), "desc": custom_desc or custom_period, "memo": "", "files": [], "inspection_period": custom_period, "team": custom_team, "inspectors": custom_inspectors, **get_site_detail_defaults(steps)})
+                    steps.append({"date": adjust_weekend(custom_date), "desc": custom_desc or custom_period, "memo": "", "files": [], "inspection_period": custom_period, "team": custom_team, "inspectors": custom_inspectors, "inspection_results": [], "result_summary": "", **get_site_detail_defaults(steps)})
                     steps.sort(key=lambda x: x['date'])
                     save_data(st.session_state.site_data)
                     st.rerun()
@@ -905,7 +947,7 @@ def main():
                         curr = penalty_base_date
                         for days, desc in PENALTY_INTERVALS:
                             curr = adjust_weekend(curr + timedelta(days=days))
-                            steps.append({"date": curr, "desc": desc, "memo": "", "files": [], "inspection_period": "기타", "team": "", "inspectors": "", **get_site_detail_defaults(steps)})
+                            steps.append({"date": curr, "desc": desc, "memo": "", "files": [], "inspection_period": "기타", "team": "", "inspectors": "", "inspection_results": [], "result_summary": "", **get_site_detail_defaults(steps)})
                         steps.sort(key=lambda x: x['date'])
                         save_data(st.session_state.site_data)
                         st.rerun()
@@ -919,6 +961,7 @@ def main():
         for i, step in enumerate(current_page_steps):
             actual_idx = start_idx + i  
             with st.container(border=True):
+                # 💡 [수정됨] 결과를 효율적으로 표시하기 위해 비율 조정
                 c1, c2, c3 = st.columns([2, 5, 4])
                 with c1:
                     new_date = st.date_input("기한", value=step['date'], key=f"date_{actual_idx}")
@@ -939,8 +982,14 @@ def main():
                         st.rerun()
                 
                 with c2:
-                    new_memo = st.text_area("📝 메모", value=step.get('memo', ''), height=100, key=f"memo_{actual_idx}")
-                    if new_memo != step.get('memo', ''):
+                    # 💡 [수정됨] 확인서 상태와 관련된 결과분류, 요약, 일반 메모를 한 곳에 모아서 직관적으로 관리
+                    new_results = st.multiselect("🏷️ 점검결과 (복수선택)", RESULT_CATEGORIES, default=step.get('inspection_results', []), key=f"res_{actual_idx}")
+                    new_summary = st.text_area("📑 확인서 요약", value=step.get('result_summary', ''), height=70, key=f"sum_{actual_idx}")
+                    new_memo = st.text_area("📝 일반 메모", value=step.get('memo', ''), height=100, key=f"memo_{actual_idx}")
+                    
+                    if new_results != step.get('inspection_results', []) or new_summary != step.get('result_summary', '') or new_memo != step.get('memo', ''):
+                        steps[actual_idx]['inspection_results'] = new_results
+                        steps[actual_idx]['result_summary'] = new_summary
                         steps[actual_idx]['memo'] = new_memo
                         save_data(st.session_state.site_data)
                 
