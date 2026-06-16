@@ -15,7 +15,7 @@ from typing import Dict, List, Any, Optional, Union
 from dotenv import load_dotenv
 load_dotenv()
 
-# 워드 보고서 생성을 위한 라이브러리 (필수 설치: pip install python-docx)
+# 워드 보고서 생성을 위한 라이브러리
 try:
     from docx import Document
     from docx.shared import Pt, Cm
@@ -23,6 +23,13 @@ try:
     DOCX_AVAILABLE = True
 except ImportError:
     DOCX_AVAILABLE = False
+
+# 💡 깃허브 자동 저장(수면모드 방어)을 위한 라이브러리 (필수 설치: pip install PyGithub)
+try:
+    from github import Github
+    GITHUB_AVAILABLE = True
+except ImportError:
+    GITHUB_AVAILABLE = False
 
 # 특정 네트워크에서 gRPC 통신 타임아웃 방지
 os.environ['GRPC_DNS_RESOLVER'] = 'native'
@@ -81,6 +88,10 @@ try:
 except ImportError:
     GEMINI_API_KEY = ""
 
+# 💡 깃허브 동기화용 시크릿 변수 로드
+GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", st.secrets.get("GITHUB_TOKEN", ""))
+GITHUB_REPO = os.environ.get("GITHUB_REPO", st.secrets.get("GITHUB_REPO", ""))
+
 DB_FILENAME = "penalty_database.csv"
 ATTACH_DIR = "attachments"
 ITEMS_PER_PAGE = 10 
@@ -98,11 +109,38 @@ PENALTY_INTERVALS = [
 RESULT_CATEGORIES = ["해당없음", "현장지시", "현지시정", "과태료", "벌점", "벌칙"]
 
 # ==========================================
-# 🛡️ 유틸리티 함수 (보안, 저장 및 워드생성)
+# 🛡️ 유틸리티 함수 (보안, 저장, 동기화 및 워드생성)
 # ==========================================
 def secure_filename(filename: str) -> str:
     filename = os.path.basename(filename)
     return re.sub(r'[^a-zA-Z0-9가-힣_\-\.]', '_', filename)
+
+# 💡 깃허브 자동 백업(Push) 함수
+def sync_to_github(file_path: str):
+    if not GITHUB_AVAILABLE or not GITHUB_TOKEN or not GITHUB_REPO: return
+    try:
+        g = Github(GITHUB_TOKEN)
+        repo = g.get_repo(GITHUB_REPO)
+        with open(file_path, 'r', encoding='utf-8-sig') as file: content = file.read()
+        try:
+            contents = repo.get_contents(file_path)
+            repo.update_file(contents.path, f"데이터 자동 동기화 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", content, contents.sha)
+        except:
+            repo.create_file(file_path, f"초기 데이터 생성 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", content)
+    except Exception as e:
+        print(f"GitHub Sync Error: {e}")
+
+# 💡 깃허브 자동 복구(Pull) 함수
+def pull_from_github(file_path: str):
+    if not GITHUB_AVAILABLE or not GITHUB_TOKEN or not GITHUB_REPO: return False
+    try:
+        g = Github(GITHUB_TOKEN)
+        repo = g.get_repo(GITHUB_REPO)
+        contents = repo.get_contents(file_path)
+        with open(file_path, 'wb') as file: file.write(contents.decoded_content)
+        return True
+    except:
+        return False
 
 def atomic_save_csv(filename: str, headers: List[str], rows: List[List[Any]]) -> None:
     temp_filename = f"{filename}.tmp"
@@ -112,25 +150,20 @@ def atomic_save_csv(filename: str, headers: List[str], rows: List[List[Any]]) ->
             writer.writerow(headers)
             writer.writerows(rows)
         os.replace(temp_filename, filename)
+        # 💡 로컬 저장 직후 깃허브로 몰래 전송하여 수면모드 방어
+        sync_to_github(filename)
     except Exception as e:
         st.error(f"데이터 안전 저장 실패: {e}")
         if os.path.exists(temp_filename):
             os.remove(temp_filename)
 
 def generate_word_report(site_name: str, step: dict) -> bytes:
-    """입력된 데이터를 바탕으로 공공기관 서식의 Word 보고서를 자동 생성합니다."""
-    if not DOCX_AVAILABLE:
-        return b""
-        
+    if not DOCX_AVAILABLE: return b""
     doc = Document()
-    
-    # 제목 스타일
     title = doc.add_heading('현장점검 결과 보고서', 0)
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    doc.add_paragraph() 
     
-    doc.add_paragraph() # 공백
-    
-    # 들어갈 데이터 매핑
     report_data = [
         ("현장명", site_name),
         ("점검일자", step['date'].strftime('%Y-%m-%d') if step.get('date') else ""),
@@ -144,21 +177,14 @@ def generate_word_report(site_name: str, step: dict) -> bytes:
         ("특이사항(메모)", step.get("memo", ""))
     ]
     
-    # 표(Table) 생성 및 서식 적용
     table = doc.add_table(rows=len(report_data), cols=2)
     table.style = 'Table Grid'
-    
     for i, (key, val) in enumerate(report_data):
         row_cells = table.rows[i].cells
         row_cells[0].text = key
         row_cells[1].text = str(val)
-        
-        # 첫 번째 열(항목명) 굵게 처리
         for paragraph in row_cells[0].paragraphs:
-            for run in paragraph.runs:
-                run.font.bold = True
-                
-        # 셀 너비 비율 조정 (꼼수: 텍스트로 밀어내기 방지)
+            for run in paragraph.runs: run.font.bold = True
         row_cells[0].width = Cm(4.0)
         row_cells[1].width = Cm(12.0)
 
@@ -195,6 +221,41 @@ def make_dialog_draggable():
     """
     components.html(drag_js, height=0, width=0)
 
+# 💡 새롭게 추가된 지적사항 통합 검색 팝업
+@st.dialog("🔍 지적사항 통합 검색 리스트", width="large")
+def show_search_dialog(keyword: str):
+    make_dialog_draggable()
+    st.markdown(f"**'{keyword}'** 에 대한 검색 결과입니다.")
+    st.divider()
+    
+    found = False
+    for site, steps in st.session_state.site_data.items():
+        for step in steps:
+            # 검색 대상 문장 조립 (결과, 요약, 메모, 항목, 조치사항 등)
+            results_str = ", ".join(step.get("inspection_results", []))
+            search_target = f"{results_str} {step.get('result_summary','')} {step.get('memo','')} {step.get('inspection_item','')} {step.get('action_taken','')} {step.get('desc','')}"
+            
+            if keyword.replace(" ", "").lower() in search_target.replace(" ", "").lower():
+                found = True
+                date_str = step['date'].strftime('%Y-%m-%d') if step.get('date') else "날짜없음"
+                action_preview = step.get('action_taken', '미입력')
+                
+                # 검색 결과를 아코디언(확장 패널) 형태로 깔끔하게 표시
+                with st.expander(f"🏢 **{site}** | 📅 {date_str} | 🔧 조치: {action_preview}"):
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        st.markdown(f"**🏷️ 점검결과:** {results_str if results_str else '-'}")
+                        st.markdown(f"**📌 점검항목:** {step.get('inspection_item','-')}")
+                    with c2:
+                        st.markdown(f"**📑 확인서요약:** {step.get('result_summary','-')}")
+                        st.markdown(f"**📝 메모:** {step.get('memo','-')}")
+
+    if not found:
+        st.info("검색된 결과가 없습니다. 다른 키워드로 검색해 보세요.")
+    
+    if st.button("닫기", use_container_width=True):
+        st.rerun()
+
 @st.dialog("✨ AI 심의안건 보고서 작성 (새창)", width="large")
 def show_summary_dialog(file_path, file_name):
     make_dialog_draggable() 
@@ -206,7 +267,6 @@ def show_summary_dialog(file_path, file_name):
         return
 
     state_key = f"ai_summary_{file_name}"
-    
     if state_key not in st.session_state:
         with st.spinner("AI가 공무원 양식으로 보고서를 작성 중입니다..."):
             summary_result = st.write_stream(get_ai_summary_stream(file_path))
@@ -264,7 +324,6 @@ STEP_EXTRA_FIELDS = [
     ("inspectors", "점검자", ["점검자"]),
     ("inspection_results", "점검결과", ["점검결과", "결과분류"]),
     ("result_summary", "확인서요약", ["확인서요약"]),
-    # 💡 새롭게 추가된 점검 데이터 항목 (PE6 기반)
     ("inspection_item", "점검항목", ["점검항목", "점검 항목", "점검내용"]),
     ("action_taken", "조치사항", ["조치사항", "조치 사항", "조치결과"]),
     ("photo_attached", "사진첨부여부", ["사진첨부여부", "사진첨부"]),
@@ -486,7 +545,6 @@ def show_schedule_edit_dialog(site_name: str, step_idx: int):
 
         new_inspectors = st.text_area("점검자", value=clean_cell(step.get("inspectors", "")), height=80)
         
-        # 💡 새롭게 팝업 폼에도 항목 추가
         c7, c8 = st.columns([2, 1])
         with c7: new_item = st.text_input("점검 항목", value=step.get("inspection_item", ""))
         with c8: new_photo = st.checkbox("사진 첨부 여부", value=bool(step.get("photo_attached") in ["True", "True", True, "1"]))
@@ -517,7 +575,7 @@ def show_schedule_edit_dialog(site_name: str, step_idx: int):
     if closed: st.rerun()
 
 # ==========================================
-# 📅 4. Streamlit 네이티브 달력 렌더링
+# 📅 4. Streamlit 네이티브 달력 렌더링 (순수 CSS 완벽 고정)
 # ==========================================
 def make_streamlit_key(*parts) -> str:
     raw = "_".join(clean_cell(part) for part in parts)
@@ -756,6 +814,10 @@ def adjust_weekend(date_obj: date) -> date:
     return date_obj
 
 def load_data() -> dict:
+    # 💡 깃허브에서 최신 파일을 먼저 불러옵니다 (수면모드 복구)
+    if not os.path.exists(DB_FILENAME):
+        pull_from_github(DB_FILENAME)
+        
     site_data = {}
     if not os.path.exists(DB_FILENAME): return site_data
     try:
@@ -884,6 +946,14 @@ def main():
     st.title("🏗️ 현장점검 통합관리 시스템")
 
     with st.sidebar:
+        # 💡 지적사항 통합 검색창 (새로운 창 리스트업)
+        st.header("🔍 지적사항 통합 검색")
+        search_keyword = st.text_input("벌점, 과태료, 지적내용 등 검색어 입력")
+        if st.button("모아보기 (새창)", use_container_width=True) and search_keyword:
+            show_search_dialog(search_keyword)
+            
+        st.divider()
+
         st.header("💾 데이터 백업 및 복구")
         st.info("⚠️ 클라우드 수면 모드로 인한 데이터 초기화 대비용입니다. 주기적으로 백업을 다운로드 해두세요.")
         if os.path.exists(DB_FILENAME):
@@ -894,6 +964,8 @@ def main():
             with open(DB_FILENAME, "wb") as f: f.write(backup_file.getbuffer())
             st.session_state.site_data = load_data()
             st.success("데이터가 성공적으로 복구되었습니다!")
+            # 복구 후 깃허브에도 동기화
+            sync_to_github(DB_FILENAME)
             time.sleep(1)
             st.rerun()
             
@@ -927,14 +999,14 @@ def main():
 
         st.divider()
         st.header("📋 프로젝트 선택 및 필터")
-        search_query = st.text_input("🔍 현장명 검색")
+        search_query_list = st.text_input("🔍 현장명 검색")
         filter_results = st.multiselect("🏷️ 점검결과 포함 현장 필터링", RESULT_CATEGORIES)
         
         all_sites = sorted(list(st.session_state.site_data.keys()))
         filtered_sites = []
         
         for site in all_sites:
-            if search_query and search_query.lower() not in site.lower():
+            if search_query_list and search_query_list.lower() not in site.lower():
                 continue
             if filter_results:
                 has_match = False
@@ -1030,7 +1102,6 @@ def main():
                     new_team = st.text_input("담당조", value=clean_cell(step.get('team', '')) or extract_team_from_desc(step.get('desc', '')), key=f"team_{actual_idx}")
                     new_desc = st.text_input("업무명", value=step['desc'], key=f"desc_{actual_idx}")
                     
-                    # 💡 추가된 필드: 점검항목
                     new_item = st.text_input("점검 항목", value=step.get('inspection_item', ''), key=f"item_{actual_idx}")
                     new_inspectors = st.text_area("점검자", value=clean_cell(step.get('inspectors', '')), height=70, key=f"inspectors_{actual_idx}")
                     
@@ -1049,7 +1120,6 @@ def main():
                     new_results = st.multiselect("🏷️ 점검결과 (복수선택)", RESULT_CATEGORIES, default=step.get('inspection_results', []), key=f"res_{actual_idx}")
                     new_summary = st.text_area("📑 확인서 요약", value=step.get('result_summary', ''), height=70, key=f"sum_{actual_idx}")
                     
-                    # 💡 추가된 필드: 조치사항, 사진여부
                     new_action = st.text_input("🔧 조치 사항", value=step.get('action_taken', ''), key=f"act_{actual_idx}")
                     new_photo = st.checkbox("📸 사진 첨부 (결과보고서용)", value=bool(step.get('photo_attached') in ["True", "True", True, "1"]), key=f"pho_{actual_idx}")
                     
@@ -1064,7 +1134,6 @@ def main():
                         save_data(st.session_state.site_data)
                 
                 with c3:
-                    # 💡 Word 보고서 자동생성 다운로드 버튼
                     st.markdown("**📄 공공기관 서식 보고서 자동생성**")
                     if DOCX_AVAILABLE:
                         word_data = generate_word_report(selected_site, steps[actual_idx])
