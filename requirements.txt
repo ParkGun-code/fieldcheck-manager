@@ -11,3 +11,4 @@ PyMuPDF
 pytesseract
 Pillow
 python-dotenv
+python-docx
