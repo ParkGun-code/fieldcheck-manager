@@ -15,6 +15,15 @@ from typing import Dict, List, Any, Optional, Union
 from dotenv import load_dotenv
 load_dotenv()
 
+# 워드 보고서 생성을 위한 라이브러리 (필수 설치: pip install python-docx)
+try:
+    from docx import Document
+    from docx.shared import Pt, Cm
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    DOCX_AVAILABLE = True
+except ImportError:
+    DOCX_AVAILABLE = False
+
 # 특정 네트워크에서 gRPC 통신 타임아웃 방지
 os.environ['GRPC_DNS_RESOLVER'] = 'native'
 
@@ -66,7 +75,6 @@ st.set_page_config(page_title="현장점검 통합관리 시스템", page_icon="
 SHARED_USER_ID = os.environ.get("ADMIN_ID", st.secrets.get("ADMIN_ID", "molitdj_default"))
 SHARED_PASSWORD = os.environ.get("ADMIN_PW", st.secrets.get("ADMIN_PW", "change_me!"))
 
-# AI 요약 기능용 라이브러리 로드 시도
 try:
     from google import genai
     GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", st.secrets.get("GEMINI_API_KEY", ""))
@@ -87,11 +95,10 @@ PENALTY_INTERVALS = [
     (40, "벌점 심의위원회 개최 및 최종 결과 통보")
 ]
 
-# 💡 새로 추가된 점검결과 카테고리
 RESULT_CATEGORIES = ["해당없음", "현장지시", "현지시정", "과태료", "벌점", "벌칙"]
 
 # ==========================================
-# 🛡️ 유틸리티 함수 (보안 및 데이터 안정성)
+# 🛡️ 유틸리티 함수 (보안, 저장 및 워드생성)
 # ==========================================
 def secure_filename(filename: str) -> str:
     filename = os.path.basename(filename)
@@ -109,6 +116,55 @@ def atomic_save_csv(filename: str, headers: List[str], rows: List[List[Any]]) ->
         st.error(f"데이터 안전 저장 실패: {e}")
         if os.path.exists(temp_filename):
             os.remove(temp_filename)
+
+def generate_word_report(site_name: str, step: dict) -> bytes:
+    """입력된 데이터를 바탕으로 공공기관 서식의 Word 보고서를 자동 생성합니다."""
+    if not DOCX_AVAILABLE:
+        return b""
+        
+    doc = Document()
+    
+    # 제목 스타일
+    title = doc.add_heading('현장점검 결과 보고서', 0)
+    title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    
+    doc.add_paragraph() # 공백
+    
+    # 들어갈 데이터 매핑
+    report_data = [
+        ("현장명", site_name),
+        ("점검일자", step['date'].strftime('%Y-%m-%d') if step.get('date') else ""),
+        ("점검자", step.get("inspectors", "")),
+        ("현장대리인", step.get("site_manager", "")),
+        ("점검 항목", step.get("inspection_item", "")),
+        ("점검 결과", ", ".join(step.get("inspection_results", []))),
+        ("조치 사항", step.get("action_taken", "")),
+        ("사진 첨부", "있음 (별첨)" if step.get("photo_attached") in ["True", "True", True, "1"] else "없음"),
+        ("확인서 요약", step.get("result_summary", "")),
+        ("특이사항(메모)", step.get("memo", ""))
+    ]
+    
+    # 표(Table) 생성 및 서식 적용
+    table = doc.add_table(rows=len(report_data), cols=2)
+    table.style = 'Table Grid'
+    
+    for i, (key, val) in enumerate(report_data):
+        row_cells = table.rows[i].cells
+        row_cells[0].text = key
+        row_cells[1].text = str(val)
+        
+        # 첫 번째 열(항목명) 굵게 처리
+        for paragraph in row_cells[0].paragraphs:
+            for run in paragraph.runs:
+                run.font.bold = True
+                
+        # 셀 너비 비율 조정 (꼼수: 텍스트로 밀어내기 방지)
+        row_cells[0].width = Cm(4.0)
+        row_cells[1].width = Cm(12.0)
+
+    bio = io.BytesIO()
+    doc.save(bio)
+    return bio.getvalue()
 
 # ==========================================
 # 🖱️ 2. 새창(다이얼로그) 기능
@@ -161,8 +217,7 @@ def show_summary_dialog(file_path, file_name):
     st.divider()
     c1, c2, c3 = st.columns([1, 2, 1])
     with c1:
-        if st.button("닫기", type="primary", use_container_width=True):
-            st.rerun()
+        if st.button("닫기", type="primary", use_container_width=True): st.rerun()
     with c3:
         if st.button("🔄 다시 요약하기", use_container_width=True):
             del st.session_state[state_key]
@@ -184,32 +239,35 @@ def show_file_dialog(file_path, file_name):
     except Exception as e: st.error(f"오류가 발생했습니다: {e}")
 
 # ==========================================
-# 📌 현장 상세정보 공통 처리
+# 📌 현장 상세정보 및 항목 정의
 # ==========================================
 SITE_DETAIL_FIELDS = [
-    ("site_office", "현장사무실", ["현장사무실", "현장 사무실", "현장사무소"]),
+    ("site_office", "현장사무실", ["현장사무실", "현장 사무실"]),
     ("postal_address", "별도 우편 주소", ["별도 우편 주소", "우편주소"]),
     ("construction_period", "착공일~준공일", ["착공일~준공일", "공사기간"]),
-    ("construction_start", "착공일", ["착공일", "착수일"]),
-    ("construction_end", "준공일", ["준공일", "완료일"]),
-    ("total_cost", "총공사비", ["총공사비", "도급액"]),
-    ("progress_rate", "공정률", ["공정률", "진도율"]),
-    ("builder", "시공사", ["시공사", "시공 회사"]),
-    ("supervisor", "감리사", ["감리사", "감리 회사"]),
-    ("site_manager", "현장대리인", ["현장대리인", "대리인"]),
+    ("construction_start", "착공일", ["착공일"]),
+    ("construction_end", "준공일", ["준공일"]),
+    ("total_cost", "총공사비", ["총공사비"]),
+    ("progress_rate", "공정률", ["공정률"]),
+    ("builder", "시공사", ["시공사"]),
+    ("supervisor", "감리사", ["감리사"]),
+    ("site_manager", "현장대리인", ["현장대리인"]),
     ("manager_phone", "현장대리인 전화번호", ["현장대리인 전화번호", "연락처"]),
-    ("manager_email", "현장대리인 이메일", ["현장대리인 이메일", "이메일"]),
-    ("client", "발주처", ["발주처", "인허가기관"]),
-    ("status", "공사진행상태", ["공사진행상태", "진행상태"]),
+    ("manager_email", "현장대리인 이메일", ["현장대리인 이메일"]),
+    ("client", "발주처", ["발주처"]),
+    ("status", "공사진행상태", ["공사진행상태"]),
 ]
 
-# 💡 새로 추가된 점검결과(inspection_results) 및 확인서요약(result_summary) 필드 매핑
 STEP_EXTRA_FIELDS = [
-    ("inspection_period", "점검시기", ["점검시기", "점검구분", "점검유형"]),
+    ("inspection_period", "점검시기", ["점검시기", "점검구분"]),
     ("team", "담당조", ["담당조", "점검조", "조"]),
-    ("inspectors", "점검자", ["점검자", "담당자", "참석자"]),
-    ("inspection_results", "점검결과", ["점검결과", "결과분류", "처분"]),
-    ("result_summary", "확인서요약", ["확인서요약", "요약내용", "확인서"])
+    ("inspectors", "점검자", ["점검자"]),
+    ("inspection_results", "점검결과", ["점검결과", "결과분류"]),
+    ("result_summary", "확인서요약", ["확인서요약"]),
+    # 💡 새롭게 추가된 점검 데이터 항목 (PE6 기반)
+    ("inspection_item", "점검항목", ["점검항목", "점검 항목", "점검내용"]),
+    ("action_taken", "조치사항", ["조치사항", "조치 사항", "조치결과"]),
+    ("photo_attached", "사진첨부여부", ["사진첨부여부", "사진첨부"]),
 ]
 
 MONTHLY_INSPECTION_OPTIONS = [f"{m}월 상시점검" for m in range(1, 13)]
@@ -422,13 +480,19 @@ def show_schedule_edit_dialog(site_name: str, step_idx: int):
         with c3: new_team = st.text_input("담당조", value=clean_cell(step.get("team", "")) or extract_team_from_desc(step.get("desc", "")), placeholder="예: 1조")
         with c4: new_desc = st.text_input("점검/업무명", value=clean_cell(step.get("desc", "")))
 
-        # 💡 [수정됨] 팝업창에도 결과 다중선택 및 요약 기능 반영
         c5, c6 = st.columns([1, 2])
         with c5: new_results = st.multiselect("점검결과 분류", RESULT_CATEGORIES, default=step.get("inspection_results", []))
         with c6: new_summary = st.text_area("확인서 요약", value=step.get("result_summary", ""), height=68)
 
         new_inspectors = st.text_area("점검자", value=clean_cell(step.get("inspectors", "")), height=80)
-        new_memo = st.text_area("메모", value=clean_cell(step.get("memo", "")), height=100)
+        
+        # 💡 새롭게 팝업 폼에도 항목 추가
+        c7, c8 = st.columns([2, 1])
+        with c7: new_item = st.text_input("점검 항목", value=step.get("inspection_item", ""))
+        with c8: new_photo = st.checkbox("사진 첨부 여부", value=bool(step.get("photo_attached") in ["True", "True", True, "1"]))
+        new_action = st.text_input("조치 사항", value=step.get("action_taken", ""))
+        
+        new_memo = st.text_area("특이사항(메모)", value=clean_cell(step.get("memo", "")), height=100)
 
         st.markdown("#### 현장 상세정보 수정")
         detail_values = render_site_detail_inputs(get_site_detail_defaults(steps), f"calendar_detail_{site_name}_{step_idx}")
@@ -440,7 +504,8 @@ def show_schedule_edit_dialog(site_name: str, step_idx: int):
         steps[step_idx].update({
             "date": new_date, "inspection_period": new_period, "team": new_team, 
             "inspectors": new_inspectors, "desc": new_desc, "memo": new_memo,
-            "inspection_results": new_results, "result_summary": new_summary # 💡 추가됨
+            "inspection_results": new_results, "result_summary": new_summary,
+            "inspection_item": new_item, "action_taken": new_action, "photo_attached": str(new_photo)
         })
         apply_site_details_to_all_steps(site_name, detail_values)
         steps.sort(key=lambda x: x['date'])
@@ -452,7 +517,7 @@ def show_schedule_edit_dialog(site_name: str, step_idx: int):
     if closed: st.rerun()
 
 # ==========================================
-# 📅 4. Streamlit 네이티브 달력 렌더링 (순수 CSS 완벽 고정)
+# 📅 4. Streamlit 네이티브 달력 렌더링
 # ==========================================
 def make_streamlit_key(*parts) -> str:
     raw = "_".join(clean_cell(part) for part in parts)
@@ -709,7 +774,6 @@ def load_data() -> dict:
                     "files": files_str.split("|") if files_str else [],
                 }
                 
-                # 💡 [수정됨] 점검결과는 리스트(복수형)로 변환해서 불러옵니다.
                 for key, label, _ in STEP_EXTRA_FIELDS:
                     raw_val = clean_cell(row.get(label, ''))
                     if key == "inspection_results":
@@ -732,7 +796,6 @@ def save_data(site_data: dict) -> None:
         for step in site_data[name]:
             row = [row_num, name, step['date'].strftime('%Y-%m-%d'), step.get('desc', ''), step.get('memo', ''), "|".join(step.get('files', []))]
             
-            # 💡 [수정됨] 점검결과(리스트)는 쉼표로 이어서 텍스트로 저장합니다.
             for key, _, _ in STEP_EXTRA_FIELDS: 
                 val = step.get(key, '')
                 if isinstance(val, list): row.append(",".join(val))
@@ -794,7 +857,9 @@ def process_excel_schedule(file) -> None:
                 st.session_state.site_data[site_name].append({
                     "date": plan_date, "desc": desc, "memo": memo, "files": [],
                     "inspection_period": inspection_period, "team": team, "inspectors": inspectors, 
-                    "inspection_results": [], "result_summary": "", **inherited_details,
+                    "inspection_results": [], "result_summary": "", 
+                    "inspection_item": "", "action_taken": "", "photo_attached": "False",
+                    **inherited_details,
                 })
                 st.session_state.site_data[site_name].sort(key=lambda x: x['date'])
                 success_count += 1
@@ -854,13 +919,13 @@ def main():
                     st.session_state.site_data[new_site_name] = [{
                         "date": start_date, "desc": "현장점검 실시", "memo": "", "files": [],
                         "inspection_period": new_inspection_period, "team": new_team, "inspectors": new_inspectors,
-                        "inspection_results": [], "result_summary": "", **new_detail_values,
+                        "inspection_results": [], "result_summary": "", 
+                        "inspection_item": "", "action_taken": "", "photo_attached": "False", **new_detail_values,
                     }]
                     save_data(st.session_state.site_data)
                     st.rerun()
 
         st.divider()
-        # 💡 [수정됨] 스마트 결과 필터링(검색) 기능 추가
         st.header("📋 프로젝트 선택 및 필터")
         search_query = st.text_input("🔍 현장명 검색")
         filter_results = st.multiselect("🏷️ 점검결과 포함 현장 필터링", RESULT_CATEGORIES)
@@ -869,11 +934,8 @@ def main():
         filtered_sites = []
         
         for site in all_sites:
-            # 1. 텍스트 검색 필터
             if search_query and search_query.lower() not in site.lower():
                 continue
-            
-            # 2. 키워드 필터 (선택한 결과 카테고리가 해당 현장의 일정 중 하나라도 포함되어 있으면 리스트업)
             if filter_results:
                 has_match = False
                 for step in st.session_state.site_data[site]:
@@ -882,7 +944,6 @@ def main():
                         break
                 if not has_match:
                     continue
-                    
             filtered_sites.append(site)
 
         site_options = ["전체 현장"] + filtered_sites
@@ -933,7 +994,7 @@ def main():
                     custom_team = st.text_input("담당조", key="c_team")
                     custom_inspectors = st.text_input("점검자", key="c_inspectors")
                 if st.button("일정 끼워넣기", use_container_width=True):
-                    steps.append({"date": adjust_weekend(custom_date), "desc": custom_desc or custom_period, "memo": "", "files": [], "inspection_period": custom_period, "team": custom_team, "inspectors": custom_inspectors, "inspection_results": [], "result_summary": "", **get_site_detail_defaults(steps)})
+                    steps.append({"date": adjust_weekend(custom_date), "desc": custom_desc or custom_period, "memo": "", "files": [], "inspection_period": custom_period, "team": custom_team, "inspectors": custom_inspectors, "inspection_results": [], "result_summary": "", "inspection_item": "", "action_taken": "", "photo_attached": "False", **get_site_detail_defaults(steps)})
                     steps.sort(key=lambda x: x['date'])
                     save_data(st.session_state.site_data)
                     st.rerun()
@@ -947,7 +1008,7 @@ def main():
                         curr = penalty_base_date
                         for days, desc in PENALTY_INTERVALS:
                             curr = adjust_weekend(curr + timedelta(days=days))
-                            steps.append({"date": curr, "desc": desc, "memo": "", "files": [], "inspection_period": "기타", "team": "", "inspectors": "", "inspection_results": [], "result_summary": "", **get_site_detail_defaults(steps)})
+                            steps.append({"date": curr, "desc": desc, "memo": "", "files": [], "inspection_period": "기타", "team": "", "inspectors": "", "inspection_results": [], "result_summary": "", "inspection_item": "", "action_taken": "", "photo_attached": "False", **get_site_detail_defaults(steps)})
                         steps.sort(key=lambda x: x['date'])
                         save_data(st.session_state.site_data)
                         st.rerun()
@@ -961,7 +1022,6 @@ def main():
         for i, step in enumerate(current_page_steps):
             actual_idx = start_idx + i  
             with st.container(border=True):
-                # 💡 [수정됨] 결과를 효율적으로 표시하기 위해 비율 조정
                 c1, c2, c3 = st.columns([2, 5, 4])
                 with c1:
                     new_date = st.date_input("기한", value=step['date'], key=f"date_{actual_idx}")
@@ -969,31 +1029,57 @@ def main():
                     new_period = st.selectbox("점검시기", selectbox_options_with_current(cur_per), index=selectbox_options_with_current(cur_per).index(cur_per), key=f"period_{actual_idx}")
                     new_team = st.text_input("담당조", value=clean_cell(step.get('team', '')) or extract_team_from_desc(step.get('desc', '')), key=f"team_{actual_idx}")
                     new_desc = st.text_input("업무명", value=step['desc'], key=f"desc_{actual_idx}")
+                    
+                    # 💡 추가된 필드: 점검항목
+                    new_item = st.text_input("점검 항목", value=step.get('inspection_item', ''), key=f"item_{actual_idx}")
                     new_inspectors = st.text_area("점검자", value=clean_cell(step.get('inspectors', '')), height=70, key=f"inspectors_{actual_idx}")
                     
-                    if any([new_date != step['date'], new_desc != step['desc'], new_period != cur_per, new_team != step.get('team'), new_inspectors != step.get('inspectors')]):
-                        steps[actual_idx].update({"date": new_date, "inspection_period": new_period, "team": new_team, "desc": new_desc, "inspectors": new_inspectors})
+                    if any([new_date != step['date'], new_desc != step['desc'], new_period != cur_per, new_team != step.get('team'), new_inspectors != step.get('inspectors'), new_item != step.get('inspection_item', '')]):
+                        steps[actual_idx].update({"date": new_date, "inspection_period": new_period, "team": new_team, "desc": new_desc, "inspectors": new_inspectors, "inspection_item": new_item})
                         steps.sort(key=lambda x: x['date'])
                         save_data(st.session_state.site_data)
                         st.rerun()
+                        
                     if st.button("❌ 일정 전체 삭제", key=f"del_{actual_idx}"):
                         steps.pop(actual_idx)
                         save_data(st.session_state.site_data)
                         st.rerun()
                 
                 with c2:
-                    # 💡 [수정됨] 확인서 상태와 관련된 결과분류, 요약, 일반 메모를 한 곳에 모아서 직관적으로 관리
                     new_results = st.multiselect("🏷️ 점검결과 (복수선택)", RESULT_CATEGORIES, default=step.get('inspection_results', []), key=f"res_{actual_idx}")
                     new_summary = st.text_area("📑 확인서 요약", value=step.get('result_summary', ''), height=70, key=f"sum_{actual_idx}")
-                    new_memo = st.text_area("📝 일반 메모", value=step.get('memo', ''), height=100, key=f"memo_{actual_idx}")
                     
-                    if new_results != step.get('inspection_results', []) or new_summary != step.get('result_summary', '') or new_memo != step.get('memo', ''):
+                    # 💡 추가된 필드: 조치사항, 사진여부
+                    new_action = st.text_input("🔧 조치 사항", value=step.get('action_taken', ''), key=f"act_{actual_idx}")
+                    new_photo = st.checkbox("📸 사진 첨부 (결과보고서용)", value=bool(step.get('photo_attached') in ["True", "True", True, "1"]), key=f"pho_{actual_idx}")
+                    
+                    new_memo = st.text_area("📝 특이사항(일반 메모)", value=step.get('memo', ''), height=100, key=f"memo_{actual_idx}")
+                    
+                    if new_results != step.get('inspection_results', []) or new_summary != step.get('result_summary', '') or new_memo != step.get('memo', '') or new_action != step.get('action_taken', '') or str(new_photo) != step.get('photo_attached', ''):
                         steps[actual_idx]['inspection_results'] = new_results
                         steps[actual_idx]['result_summary'] = new_summary
                         steps[actual_idx]['memo'] = new_memo
+                        steps[actual_idx]['action_taken'] = new_action
+                        steps[actual_idx]['photo_attached'] = str(new_photo)
                         save_data(st.session_state.site_data)
                 
                 with c3:
+                    # 💡 Word 보고서 자동생성 다운로드 버튼
+                    st.markdown("**📄 공공기관 서식 보고서 자동생성**")
+                    if DOCX_AVAILABLE:
+                        word_data = generate_word_report(selected_site, steps[actual_idx])
+                        st.download_button(
+                            label="📝 결과 보고서 다운로드 (Word)",
+                            data=word_data,
+                            file_name=f"결과보고서_{selected_site}_{steps[actual_idx]['date'].strftime('%Y%m%d')}.docx",
+                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                            use_container_width=True,
+                            key=f"word_{actual_idx}"
+                        )
+                    else:
+                        st.error("python-docx 라이브러리가 설치되지 않았습니다.")
+                        
+                    st.markdown("---")
                     st.markdown("**📂 첨부 파일 (드래그 앤 드롭)**")
                     uploaded_files = st.file_uploader("업로드", accept_multiple_files=True, key=f"up_{actual_idx}", label_visibility="collapsed")
                     
